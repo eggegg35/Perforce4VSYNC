@@ -1,8 +1,10 @@
-﻿import os
+import os
 import types
 import json
 import argparse
 import sys
+import shutil
+import stat
 from typing import List
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -68,6 +70,11 @@ def normalize_repo_path(path: str) -> str:
     normalized = path.strip().replace("\\", "/")
     if not normalized:
         return ""
+    # Meta files are handled automatically; normalize to the owning asset/folder path.
+    if normalized.lower().endswith(".meta"):
+        normalized = normalized[:-5]
+    if not normalized:
+        return ""
     if not normalized.startswith("unity_project/"):
         normalized = f"unity_project/{normalized}"
     return normalized
@@ -106,6 +113,54 @@ def clear_target_path(path: str):
         clear_folder(path)
 
 
+def remove_single_file(file_path: str):
+    if os.path.isfile(file_path):
+        try:
+            os.chmod(file_path, stat.S_IWRITE)
+            os.remove(file_path)
+        except Exception as e:
+            print(f"????: {file_path}, ??: {e}")
+
+
+def copy_single_file(src_file: str, dst_file: str):
+    if not os.path.isfile(src_file):
+        return
+    try:
+        os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+        if os.path.exists(dst_file):
+            os.chmod(dst_file, stat.S_IWRITE)
+            os.remove(dst_file)
+        shutil.copy2(src_file, dst_file)
+    except Exception as e:
+        print(f"????: {src_file} -> {dst_file}, ??: {e}")
+
+
+def sync_folder_meta(source_folder: str, target_folder: str):
+    source_meta = f"{source_folder}.meta"
+    target_meta = f"{target_folder}.meta"
+    if not os.path.isfile(source_meta):
+        remove_single_file(target_meta)
+        return
+    copy_single_file(source_meta, target_meta)
+
+
+def delete_target_path(path: str):
+    if not is_unity_folder(path):
+        clear_asset(path)
+        return
+
+    if os.path.isdir(path):
+        def on_rm_error(func, target, exc_info):
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+
+        try:
+            shutil.rmtree(path, onerror=on_rm_error)
+        except Exception as e:
+            print(f"??????: {path}, ??: {e}")
+    remove_single_file(f"{path}.meta")
+
+
 def copy_between_branches(target_path: str, source_branch: str, target_branch: str):
     source_path = get_branch_path(source_branch, target_path)
     target_path_full = get_branch_path(target_branch, target_path)
@@ -116,6 +171,7 @@ def copy_between_branches(target_path: str, source_branch: str, target_branch: s
         copy_asset(source_path, target_path_full)
     else:
         copy_folder(source_path, target_path_full)
+        sync_folder_meta(source_path, target_path_full)
 
 
 def generate_meta_file_paths(input_list: List[str]) -> List[str]:
@@ -176,20 +232,22 @@ def open_multiple_paths(
 ):
     setup_p4_args(branch_key, log_file)
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
+    # Keep open-only behavior aligned with submit: include paired .meta files.
+    open_list = list(dict.fromkeys(generate_meta_file_paths(path_list)))
     change_id = "New" if pending_message else "default"
     change_msg = pending_message or open_msg
-    P4Tool.p4_add_to_changelist(path_list, change_id, change_msg)
+    P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
     if change_id == "default":
-        print(f"已加入默认 pending: {path_list}")
+        print(f"已加入默认 pending: {open_list}")
     else:
-        print(f"已加入新建 pending: {path_list}")
+        print(f"已加入新建 pending: {open_list}")
 
 
 def apply_operation(paths: List[str], source_branch: str, target_branch: str, operation: str):
     if operation == "delete":
         for path in paths:
             target_path = get_branch_path(target_branch, path)
-            clear_target_path(target_path)
+            delete_target_path(target_path)
         return
 
     for path in paths:
