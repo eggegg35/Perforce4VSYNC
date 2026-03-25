@@ -1,0 +1,32 @@
+﻿{
+  "branches": {
+    "001": {
+      "name": "001",
+      "root": "C:\\worldx_robot_HZPCC0420018_1001",
+      "workspace": "worldx_robot_HZPCC0420018_1001",
+      "depot": "//world_x/ver_0.01",
+      "p4_user": "worldx_robot"
+    },
+    "release": {
+      "name": "release",
+      "root": "E:\\worldx_robot_HZPCC0420018_2708",
+      "workspace": "worldx_robot_HZPCC0420018_2708",
+      "depot": "//world_x/release",
+      "p4_user": "worldx_robot"
+    },
+    "feature": {
+      "name": "feature",
+      "root": "",
+      "workspace": "",
+      "depot": "",
+      "p4_user": ""
+    },
+    "art": {
+      "name": "art",
+      "root": "",
+      "workspace": "",
+      "depot": "",
+      "p4_user": ""
+    }
+  }
+}
