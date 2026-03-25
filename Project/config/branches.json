@@ -1,32 +1,25 @@
 ﻿{
   "branches": {
-    "001": {
-      "name": "001",
-      "root": "C:\\worldx_robot_HZPCC0420018_1001",
-      "workspace": "worldx_robot_HZPCC0420018_1001",
-      "depot": "//world_x/ver_0.01",
+    "art": {
+      "name": "art",
+      "root": "C:\\worldx_robot_HZPCC0420018_3458",
+      "workspace": "worldx_robot_HZPCC0420018_3458",
+      "depot": "//world_x/art",
       "p4_user": "worldx_robot"
     },
-    "release": {
-      "name": "release",
-      "root": "E:\\worldx_robot_HZPCC0420018_2708",
-      "workspace": "worldx_robot_HZPCC0420018_2708",
-      "depot": "//world_x/release",
+    "001": {
+      "name": "001",
+      "root": "E:\\Ver001",
+      "workspace": "worldx_robot_HZPCC0420018_5198",
+      "depot": "//world_x/ver_0.01",
       "p4_user": "worldx_robot"
     },
     "feature": {
       "name": "feature",
-      "root": "",
-      "workspace": "",
-      "depot": "",
-      "p4_user": ""
-    },
-    "art": {
-      "name": "art",
-      "root": "",
-      "workspace": "",
-      "depot": "",
-      "p4_user": ""
+      "root": "E:\\Feature",
+      "workspace": "worldx_robot_HZPCC0420018_3252",
+      "depot": "//world_x/feature",
+      "p4_user": "worldx_robot"
     }
   }
 }
