@@ -27,7 +27,8 @@ _ACTIVE_CONFIG = None
 
 
 def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
+    # Accept UTF-8 files both with and without BOM.
+    with open(config_path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     if "branches" not in data:
         raise ValueError("Config file must include 'branches'.")
