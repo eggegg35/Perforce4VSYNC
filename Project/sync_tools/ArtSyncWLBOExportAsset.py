@@ -30,6 +30,8 @@ if __name__ == "__main__":
     parser.add_argument("--config", default=ArtSyncMultiBranch.DEFAULT_CONFIG_PATH, help="分支配置 JSON 路径")
     parser.add_argument("--message", default=None, help="可选提交说明")
     parser.add_argument("--no-submit", action="store_true", help="只更新+拷贝/删除，不执行提交")
+    parser.add_argument("--open-only", action="store_true", help="只打开到默认 pending，不提交")
+    parser.add_argument("--pending-message", default=None, help="仅 --open-only 时有效：创建新 pending 并使用该说明")
     parser.add_argument("--dry-run", action="store_true", help="仅打印将要执行的步骤，不实际执行")
     args = parser.parse_args()
 
@@ -44,5 +46,7 @@ if __name__ == "__main__":
         source_branch=args.source,
         submit_message=args.message,
         no_submit=args.no_submit,
+        open_only=args.open_only,
+        pending_message=args.pending_message,
         dry_run=args.dry_run,
     )

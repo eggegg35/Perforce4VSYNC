@@ -167,6 +167,24 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
     print(f"提交路径: {path_list}")
 
 
+def open_multiple_paths(
+    paths: List[str],
+    branch_key: str,
+    log_file: str,
+    open_msg: str,
+    pending_message: str = None,
+):
+    setup_p4_args(branch_key, log_file)
+    path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
+    change_id = "New" if pending_message else "default"
+    change_msg = pending_message or open_msg
+    P4Tool.p4_add_to_changelist(path_list, change_id, change_msg)
+    if change_id == "default":
+        print(f"已加入默认 pending: {path_list}")
+    else:
+        print(f"已加入新建 pending: {path_list}")
+
+
 def apply_operation(paths: List[str], source_branch: str, target_branch: str, operation: str):
     if operation == "delete":
         for path in paths:
@@ -185,6 +203,8 @@ def run_branch_sync(
     source_branch: str = DEFAULT_SOURCE_BRANCH,
     submit_message: str = None,
     no_submit: bool = False,
+    open_only: bool = False,
+    pending_message: str = None,
     dry_run: bool = False,
 ):
     validate_branch_config(source_branch)
@@ -204,7 +224,11 @@ def run_branch_sync(
         print(f"[DRY-RUN] source={source_branch} targets={','.join(target_branches)} operation={op}")
         for p in paths:
             print(f"[DRY-RUN] file: {p}")
-        if no_submit:
+        if open_only:
+            print("[DRY-RUN] open files to pending (--open-only)")
+            if pending_message:
+                print(f"[DRY-RUN] pending message: {pending_message}")
+        elif no_submit:
             print("[DRY-RUN] skip submit (--no-submit)")
         return
 
@@ -214,6 +238,17 @@ def run_branch_sync(
         update_multiple_paths(paths, target_branch, "p4_update_log.txt")
 
         apply_operation(paths, source_branch, target_branch, op)
+
+        if open_only:
+            default_msg = f"open {op}: {source_branch} -> {target_branch}"
+            open_multiple_paths(
+                paths,
+                target_branch,
+                "p4_update_log.txt",
+                submit_message or default_msg,
+                pending_message=pending_message,
+            )
+            continue
 
         if no_submit:
             print(f"已跳过提交（--no-submit）: {source_branch} -> {target_branch}")
@@ -236,6 +271,8 @@ if __name__ == "__main__":
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="分支配置 JSON 路径")
     parser.add_argument("--message", default=None, help="可选提交说明")
     parser.add_argument("--no-submit", action="store_true", help="只更新+拷贝/删除，不执行提交")
+    parser.add_argument("--open-only", action="store_true", help="只打开到默认 pending，不提交")
+    parser.add_argument("--pending-message", default=None, help="仅 --open-only 时有效：创建新 pending 并使用该说明")
     parser.add_argument("--dry-run", action="store_true", help="仅打印将要执行的步骤，不实际执行")
     args = parser.parse_args()
 
@@ -252,5 +289,7 @@ if __name__ == "__main__":
         source_branch=args.source,
         submit_message=args.message,
         no_submit=args.no_submit,
+        open_only=args.open_only,
+        pending_message=args.pending_message,
         dry_run=args.dry_run,
     )
