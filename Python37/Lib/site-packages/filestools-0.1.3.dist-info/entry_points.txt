@@ -1,0 +1,7 @@
+[console_scripts]
+curl2py = curl2py.__main__:main
+diff = filediff.__main__:main
+marker = watermarker.__main__:main
+tree = treedir.__main__:main
+tree2 = treedir.__main__:main
+

@@ -1,0 +1,2 @@
+[pygments.lexers]
+diffx = pydiffx.integrations.pygments_lexer:DiffXLexer
