@@ -5,7 +5,10 @@ import argparse
 import sys
 import shutil
 import stat
-from typing import List
+import datetime
+import urllib.request
+import urllib.error
+from typing import List, Dict, Any
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -23,6 +26,7 @@ BASE_DIR = SCRIPT_DIR
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, "branches.json")
 DEFAULT_SOURCE_BRANCH = "art"
+DEFAULT_MSG_API = "http://10.8.45.67:3106/lark_tools_send_msg"
 REQUIRED_BRANCH_FIELDS = ("root", "workspace", "p4_user")
 
 _ACTIVE_CONFIG = None
@@ -224,11 +228,74 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
 
 
 def build_change_message(base_msg: str, pending_message: str = None) -> str:
-    full_msg = f"p4-bypass p4-admin-bypass {base_msg}"
+    full_msg = f"p4-p4 {base_msg}"
     trimmed_pending = (pending_message or "").strip()
     if trimmed_pending:
         full_msg = f"{full_msg} {trimmed_pending}"
     return full_msg
+
+
+def build_email_report(
+    records: List[Dict[str, Any]],
+    source_branch: str,
+    target_branches: List[str],
+    operation: str,
+    pending_message: str = None,
+) -> str:
+    lines = [
+        "ArtSync execution report",
+        f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"source: {source_branch}",
+        f"targets: {','.join(target_branches)}",
+        f"operation: {operation}",
+    ]
+    if pending_message:
+        lines.append(f"pending_message: {pending_message}")
+    lines.append("")
+    lines.append("records:")
+
+    if not records:
+        lines.append("- no records generated")
+    else:
+        for record in records:
+            lines.append(
+                f"- branch={record['branch']} action={record['action']} message={record['message']}"
+            )
+            for path in record["paths"]:
+                lines.append(f"  - {path}")
+            lines.append("  - (paired .meta handled automatically)")
+
+    return "\n".join(lines)
+
+
+def send_email_report(to_email: str, subject: str, body: str) -> bool:
+    msg_api = os.getenv("ARTSYNC_MSG_API", DEFAULT_MSG_API).strip()
+    payload = {
+        "type": "user",
+        "target": to_email,
+        "msg": f"{subject}\n\n{body}",
+    }
+    req = urllib.request.Request(
+        msg_api,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            ret = resp.read().decode("utf-8", errors="ignore")
+        print(f"Email message sent to {to_email}: {ret}")
+        return True
+    except urllib.error.HTTPError as e:
+        print(f"Email send failed: HTTP {e.code} {e.reason}")
+        return False
+    except urllib.error.URLError as e:
+        print(f"Email send failed: {e.reason}")
+        return False
+    except Exception as e:
+        print(f"Email send failed: {e}")
+        return False
 
 
 def open_multiple_paths(
@@ -275,6 +342,7 @@ def run_branch_sync(
     pending_message: str = None,
     dry_run: bool = False,
 ):
+    records: List[Dict[str, Any]] = []
     validate_branch_config(source_branch)
     for target_branch in target_branches:
         validate_branch_config(target_branch)
@@ -296,13 +364,13 @@ def run_branch_sync(
             print("[DRY-RUN] open files to pending (--open-only)")
             if pending_message:
                 print(f"[DRY-RUN] pending message: {pending_message}")
-                print("[DRY-RUN] pending desc format: p4-bypass p4-admin-bypass <normal message> <pending-message>")
+                print("[DRY-RUN] pending desc format: p4-p4 <normal message> <pending-message>")
         elif no_submit:
             print("[DRY-RUN] skip submit (--no-submit)")
         elif pending_message:
             print(f"[DRY-RUN] pending message: {pending_message}")
-            print("[DRY-RUN] submit desc format: p4-bypass p4-admin-bypass <normal message> <pending-message>")
-        return
+            print("[DRY-RUN] submit desc format: p4-p4 <normal message> <pending-message>")
+        return records
 
     for target_branch in target_branches:
         if op != "delete":
@@ -313,6 +381,7 @@ def run_branch_sync(
 
         if open_only:
             default_msg = f"open {op}: {source_branch} -> {target_branch}"
+            change_msg = build_change_message(submit_message or default_msg, pending_message)
             open_multiple_paths(
                 paths,
                 target_branch,
@@ -320,11 +389,20 @@ def run_branch_sync(
                 submit_message or default_msg,
                 pending_message=pending_message,
             )
+            records.append(
+                {
+                    "branch": target_branch,
+                    "action": "open-only",
+                    "message": change_msg,
+                    "paths": list(paths),
+                }
+            )
             continue
 
         if no_submit:
             if pending_message:
                 default_msg = f"open {op}: {source_branch} -> {target_branch}"
+                change_msg = build_change_message(submit_message or default_msg, pending_message)
                 open_multiple_paths(
                     paths,
                     target_branch,
@@ -332,13 +410,39 @@ def run_branch_sync(
                     submit_message or default_msg,
                     pending_message=pending_message,
                 )
+                records.append(
+                    {
+                        "branch": target_branch,
+                        "action": "open-only-by-no-submit",
+                        "message": change_msg,
+                        "paths": list(paths),
+                    }
+                )
             else:
                 print(f"已跳过提交（--no-submit）: {source_branch} -> {target_branch}")
+                records.append(
+                    {
+                        "branch": target_branch,
+                        "action": "no-submit",
+                        "message": f"skip submit: {source_branch} -> {target_branch}",
+                        "paths": list(paths),
+                    }
+                )
             continue
 
         default_msg = f"sync {op}: {source_branch} -> {target_branch}"
         commit_msg = build_change_message(submit_message or default_msg, pending_message)
         submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
+        records.append(
+            {
+                "branch": target_branch,
+                "action": "submit",
+                "message": commit_msg,
+                "paths": list(paths),
+            }
+        )
+
+    return records
 
 
 def parse_csv_values(raw: str) -> List[str]:
@@ -355,7 +459,8 @@ if __name__ == "__main__":
     parser.add_argument("--message", default=None, help="可选提交说明")
     parser.add_argument("--no-submit", action="store_true", help="只更新+拷贝/删除，不执行提交")
     parser.add_argument("--open-only", action="store_true", help="只打开到默认 pending，不提交")
-    parser.add_argument("--pending-message", default=None, help="追加说明；描述统一格式为 p4-bypass p4-admin-bypass + 默认说明 + 该内容")
+    parser.add_argument("--pending-message", default=None, help="追加说明；描述统一格式为 p4-p4 + 默认说明 + 该内容")
+    parser.add_argument("--email", default=None, help="可选：将执行日志发送到该邮箱")
     parser.add_argument("--dry-run", action="store_true", help="仅打印将要执行的步骤，不实际执行")
     args = parser.parse_args()
 
@@ -365,7 +470,7 @@ if __name__ == "__main__":
     raw_paths = parse_csv_values(args.files)
     normalized_paths = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
 
-    run_branch_sync(
+    run_records = run_branch_sync(
         target_branches=target_branches,
         paths=normalized_paths,
         operation=args.operation,
@@ -376,3 +481,20 @@ if __name__ == "__main__":
         pending_message=args.pending_message,
         dry_run=args.dry_run,
     )
+
+    if args.email:
+        email_subject = build_change_message(
+            f"report {args.operation}: {args.source} -> {','.join(target_branches)}",
+            args.pending_message,
+        )
+        email_body = build_email_report(
+            records=run_records,
+            source_branch=args.source,
+            target_branches=target_branches,
+            operation=args.operation,
+            pending_message=args.pending_message,
+        )
+        if args.dry_run:
+            print(f"Email skipped in dry-run mode: {args.email}")
+        else:
+            send_email_report(args.email, email_subject, email_body)
