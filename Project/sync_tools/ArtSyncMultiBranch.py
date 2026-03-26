@@ -223,6 +223,14 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
     print(f"提交路径: {path_list}")
 
 
+def build_change_message(base_msg: str, pending_message: str = None) -> str:
+    full_msg = f"p4-p4 {base_msg}"
+    trimmed_pending = (pending_message or "").strip()
+    if trimmed_pending:
+        full_msg = f"{full_msg} {trimmed_pending}"
+    return full_msg
+
+
 def open_multiple_paths(
     paths: List[str],
     branch_key: str,
@@ -234,13 +242,9 @@ def open_multiple_paths(
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
     # Keep open-only behavior aligned with submit: include paired .meta files.
     open_list = list(dict.fromkeys(generate_meta_file_paths(path_list)))
-    base_msg = f"p4-p4 {open_msg}"
     trimmed_pending = (pending_message or "").strip()
     change_id = "New" if trimmed_pending else "default"
-    if trimmed_pending:
-        change_msg = f"{base_msg} {trimmed_pending}"
-    else:
-        change_msg = base_msg
+    change_msg = build_change_message(open_msg, pending_message)
     P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
     if change_id == "default":
         print(f"已加入默认 pending: {open_list}")
@@ -288,13 +292,16 @@ def run_branch_sync(
         print(f"[DRY-RUN] source={source_branch} targets={','.join(target_branches)} operation={op}")
         for p in paths:
             print(f"[DRY-RUN] file: {p}")
-        if open_only:
+        if open_only or (no_submit and pending_message):
             print("[DRY-RUN] open files to pending (--open-only)")
             if pending_message:
                 print(f"[DRY-RUN] pending message: {pending_message}")
                 print("[DRY-RUN] pending desc format: p4-p4 <normal message> <pending-message>")
         elif no_submit:
             print("[DRY-RUN] skip submit (--no-submit)")
+        elif pending_message:
+            print(f"[DRY-RUN] pending message: {pending_message}")
+            print("[DRY-RUN] submit desc format: p4-p4 <normal message> <pending-message>")
         return
 
     for target_branch in target_branches:
@@ -316,11 +323,22 @@ def run_branch_sync(
             continue
 
         if no_submit:
-            print(f"已跳过提交（--no-submit）: {source_branch} -> {target_branch}")
+            if pending_message:
+                default_msg = f"open {op}: {source_branch} -> {target_branch}"
+                open_multiple_paths(
+                    paths,
+                    target_branch,
+                    "p4_update_log.txt",
+                    submit_message or default_msg,
+                    pending_message=pending_message,
+                )
+            else:
+                print(f"已跳过提交（--no-submit）: {source_branch} -> {target_branch}")
             continue
 
         default_msg = f"sync {op}: {source_branch} -> {target_branch}"
-        submit_multiple_paths(paths, target_branch, "p4_update_log.txt", submit_message or default_msg)
+        commit_msg = build_change_message(submit_message or default_msg, pending_message)
+        submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
 
 
 def parse_csv_values(raw: str) -> List[str]:
@@ -337,7 +355,7 @@ if __name__ == "__main__":
     parser.add_argument("--message", default=None, help="可选提交说明")
     parser.add_argument("--no-submit", action="store_true", help="只更新+拷贝/删除，不执行提交")
     parser.add_argument("--open-only", action="store_true", help="只打开到默认 pending，不提交")
-    parser.add_argument("--pending-message", default=None, help="仅 --open-only 时有效：新建 pending，说明格式为 p4-p4 + 默认说明 + 该内容")
+    parser.add_argument("--pending-message", default=None, help="追加说明；描述统一格式为 p4-p4 + 默认说明 + 该内容")
     parser.add_argument("--dry-run", action="store_true", help="仅打印将要执行的步骤，不实际执行")
     args = parser.parse_args()
 
