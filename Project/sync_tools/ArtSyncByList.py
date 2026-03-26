@@ -37,7 +37,7 @@ if __name__ == '__main__':
 
     if args.email:
         email_subject = ArtSyncMultiBranch.build_change_message(
-            f"report {args.operation}: {args.source} -> {','.join(target_branches)}",
+            f"\u6267\u884c\u62a5\u544a {args.operation}: {args.source} -> {','.join(target_branches)}",
             args.pending_message,
         )
         email_body = ArtSyncMultiBranch.build_email_report(
@@ -48,6 +48,6 @@ if __name__ == '__main__':
             pending_message=args.pending_message,
         )
         if args.dry_run:
-            print(f'Email skipped in dry-run mode: {args.email}')
+            print(f'\u9884\u6f14\u6a21\u5f0f\u4e0d\u53d1\u9001\u6d88\u606f\uff0c\u76ee\u6807\u90ae\u7bb1: {args.email}')
         else:
             ArtSyncMultiBranch.send_email_report(args.email, email_subject, email_body)

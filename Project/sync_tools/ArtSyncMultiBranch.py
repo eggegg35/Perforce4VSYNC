@@ -33,11 +33,10 @@ _ACTIVE_CONFIG = None
 
 
 def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> dict:
-    # Accept UTF-8 files both with and without BOM.
     with open(config_path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     if "branches" not in data:
-        raise ValueError("Config file must include 'branches'.")
+        raise ValueError("配置文件必须包含 branches 字段。")
     return data
 
 
@@ -51,7 +50,7 @@ def get_branch_config(branch_key: str) -> dict:
         set_active_config(DEFAULT_CONFIG_PATH)
     branches = _ACTIVE_CONFIG.get("branches", {})
     if branch_key not in branches:
-        raise ValueError(f"Branch '{branch_key}' not found in config.")
+        raise ValueError(f"配置中不存在分支: {branch_key}")
     return branches[branch_key]
 
 
@@ -61,8 +60,7 @@ def validate_branch_config(branch_key: str):
         value = str(branch_cfg.get(field, "")).strip()
         if not value:
             raise ValueError(
-                f"Branch '{branch_key}' config field '{field}' is empty. "
-                f"Please update {DEFAULT_CONFIG_PATH}."
+                f"分支 {branch_key} 的配置项 {field} 为空，请先更新配置文件: {DEFAULT_CONFIG_PATH}"
             )
 
 
@@ -74,7 +72,6 @@ def normalize_repo_path(path: str) -> str:
     normalized = path.strip().replace("\\", "/")
     if not normalized:
         return ""
-    # Meta files are handled automatically; normalize to the owning asset/folder path.
     if normalized.lower().endswith(".meta"):
         normalized = normalized[:-5]
     if not normalized:
@@ -98,7 +95,7 @@ def process_file(file_path: str) -> str:
                     paths.append(line)
             return ", ".join(paths)
     except Exception as e:
-        print(f"Error reading file: {e}")
+        print(f"读取列表文件失败: {e}")
         return ""
 
 
@@ -123,7 +120,7 @@ def remove_single_file(file_path: str):
             os.chmod(file_path, stat.S_IWRITE)
             os.remove(file_path)
         except Exception as e:
-            print(f"????: {file_path}, ??: {e}")
+            print(f"删除文件失败: {file_path}, 错误: {e}")
 
 
 def copy_single_file(src_file: str, dst_file: str):
@@ -136,7 +133,7 @@ def copy_single_file(src_file: str, dst_file: str):
             os.remove(dst_file)
         shutil.copy2(src_file, dst_file)
     except Exception as e:
-        print(f"????: {src_file} -> {dst_file}, ??: {e}")
+        print(f"拷贝文件失败: {src_file} -> {dst_file}, 错误: {e}")
 
 
 def sync_folder_meta(source_folder: str, target_folder: str):
@@ -161,7 +158,7 @@ def delete_target_path(path: str):
         try:
             shutil.rmtree(path, onerror=on_rm_error)
         except Exception as e:
-            print(f"??????: {path}, ??: {e}")
+            print(f"删除目录失败: {path}, 错误: {e}")
     remove_single_file(f"{path}.meta")
 
 
@@ -214,17 +211,9 @@ def update_multiple_paths(paths: List[str], branch_key: str, log_file: str):
 
 
 def build_unlocal_paths(paths: List[str], root_prefix: str) -> List[str]:
-    root_prefix = root_prefix.rstrip("\\/")
+    root_prefix = root_prefix.rstrip("\/")
     normalized_paths = [p.strip().replace("/", os.sep).replace("\\", os.sep) for p in paths if p.strip()]
     return [os.path.join(root_prefix, p) for p in normalized_paths]
-
-
-def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, submit_msg: str):
-    setup_p4_args(branch_key, log_file)
-    path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
-    sub_list = generate_meta_file_paths(path_list)
-    P4Tool.p4_commitpathlist(sub_list, commmitMsg=submit_msg)
-    print(f"提交路径: {path_list}")
 
 
 def build_change_message(base_msg: str, pending_message: str = None) -> str:
@@ -235,6 +224,37 @@ def build_change_message(base_msg: str, pending_message: str = None) -> str:
     return full_msg
 
 
+def summarize_paths_for_log(paths: List[str], max_chars: int = 140) -> str:
+    valid_paths = [p for p in paths if p]
+    if not valid_paths:
+        return "无文件"
+
+    joined = "，".join(valid_paths)
+    if len(joined) <= max_chars:
+        return joined
+
+    if len(valid_paths) == 1:
+        return valid_paths[0]
+
+    return f"同步了{valid_paths[0]}等{len(valid_paths)}个文件"
+
+
+def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, submit_msg: str) -> str:
+    setup_p4_args(branch_key, log_file)
+    path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
+    sub_list = generate_meta_file_paths(path_list)
+    result = P4Tool.p4_commitpathlist(sub_list, commmitMsg=submit_msg)
+    print(f"提交路径摘要: {summarize_paths_for_log(path_list)}")
+    if result is True:
+        print(f"分支 {branch_key} 提交成功。")
+        return "成功"
+    if result is False:
+        print(f"分支 {branch_key} 未提交（可能没有可提交变更）。")
+        return "未提交"
+    print(f"分支 {branch_key} 提交失败，请查看 p4 日志。")
+    return "失败"
+
+
 def build_email_report(
     records: List[Dict[str, Any]],
     source_branch: str,
@@ -243,27 +263,28 @@ def build_email_report(
     pending_message: str = None,
 ) -> str:
     lines = [
-        "ArtSync execution report",
-        f"time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"source: {source_branch}",
-        f"targets: {','.join(target_branches)}",
-        f"operation: {operation}",
+        "ArtSync 执行报告",
+        f"时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"源分支: {source_branch}",
+        f"目标分支: {','.join(target_branches)}",
+        f"操作类型: {operation}",
     ]
     if pending_message:
-        lines.append(f"pending_message: {pending_message}")
+        lines.append(f"追加说明: {pending_message}")
     lines.append("")
-    lines.append("records:")
+    lines.append("执行记录:")
 
     if not records:
-        lines.append("- no records generated")
+        lines.append("- 无记录")
     else:
         for record in records:
             lines.append(
-                f"- branch={record['branch']} action={record['action']} message={record['message']}"
+                f"- 分支={record['branch']} 动作={record['action']} 状态={record['status']} 说明={record['message']}"
             )
-            for path in record["paths"]:
-                lines.append(f"  - {path}")
-            lines.append("  - (paired .meta handled automatically)")
+            path_summary = summarize_paths_for_log(record.get("paths", []))
+            lines.append(f"  文件摘要: {path_summary}")
+            lines.append(f"  文件数量: {len(record.get('paths', []))}")
+            lines.append("  备注: 已自动处理对应 .meta")
 
     return "\n".join(lines)
 
@@ -285,16 +306,16 @@ def send_email_report(to_email: str, subject: str, body: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             ret = resp.read().decode("utf-8", errors="ignore")
-        print(f"Email message sent to {to_email}: {ret}")
+        print(f"消息已发送到邮箱: {to_email}, 返回: {ret}")
         return True
     except urllib.error.HTTPError as e:
-        print(f"Email send failed: HTTP {e.code} {e.reason}")
+        print(f"发送消息失败: HTTP {e.code} {e.reason}")
         return False
     except urllib.error.URLError as e:
-        print(f"Email send failed: {e.reason}")
+        print(f"发送消息失败: {e.reason}")
         return False
     except Exception as e:
-        print(f"Email send failed: {e}")
+        print(f"发送消息失败: {e}")
         return False
 
 
@@ -304,20 +325,22 @@ def open_multiple_paths(
     log_file: str,
     open_msg: str,
     pending_message: str = None,
-):
+) -> str:
     setup_p4_args(branch_key, log_file)
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
-    # Keep open-only behavior aligned with submit: include paired .meta files.
     open_list = list(dict.fromkeys(generate_meta_file_paths(path_list)))
     trimmed_pending = (pending_message or "").strip()
     change_id = "New" if trimmed_pending else "default"
     change_msg = build_change_message(open_msg, pending_message)
     P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
+
+    print(f"分支 {branch_key} 路径摘要: {summarize_paths_for_log(path_list)}")
     if change_id == "default":
-        print(f"已加入默认 pending: {open_list}")
+        print("已加入默认 pending。")
     else:
-        print(f"已加入新建 pending: {open_list}")
-        print(f"pending desc: {change_msg}")
+        print("已加入新建 pending。")
+        print(f"pending 描述: {change_msg}")
+    return "已加入Pending（请在P4中确认）"
 
 
 def apply_operation(paths: List[str], source_branch: str, target_branch: str, operation: str):
@@ -357,19 +380,19 @@ def run_branch_sync(
         sys.exit(1)
 
     if dry_run:
-        print(f"[DRY-RUN] source={source_branch} targets={','.join(target_branches)} operation={op}")
-        for p in paths:
-            print(f"[DRY-RUN] file: {p}")
+        print(f"[预演] 源分支={source_branch} 目标分支={','.join(target_branches)} 操作={op}")
+        print(f"[预演] 文件摘要: {summarize_paths_for_log(paths)}")
+        print(f"[预演] 文件数量: {len(paths)}")
         if open_only or (no_submit and pending_message):
-            print("[DRY-RUN] open files to pending (--open-only)")
+            print("[预演] 将打开到 Pending（--open-only）。")
             if pending_message:
-                print(f"[DRY-RUN] pending message: {pending_message}")
-                print("[DRY-RUN] pending desc format: p4-p4 <normal message> <pending-message>")
+                print(f"[预演] 追加说明: {pending_message}")
+                print("[预演] 描述格式: p4-p4 <默认说明> <pending-message>")
         elif no_submit:
-            print("[DRY-RUN] skip submit (--no-submit)")
+            print("[预演] 将跳过提交（--no-submit）。")
         elif pending_message:
-            print(f"[DRY-RUN] pending message: {pending_message}")
-            print("[DRY-RUN] submit desc format: p4-p4 <normal message> <pending-message>")
+            print(f"[预演] 追加说明: {pending_message}")
+            print("[预演] 提交描述格式: p4-p4 <默认说明> <pending-message>")
         return records
 
     for target_branch in target_branches:
@@ -382,7 +405,7 @@ def run_branch_sync(
         if open_only:
             default_msg = f"open {op}: {source_branch} -> {target_branch}"
             change_msg = build_change_message(submit_message or default_msg, pending_message)
-            open_multiple_paths(
+            open_status = open_multiple_paths(
                 paths,
                 target_branch,
                 "p4_update_log.txt",
@@ -392,8 +415,9 @@ def run_branch_sync(
             records.append(
                 {
                     "branch": target_branch,
-                    "action": "open-only",
+                    "action": "仅打开Pending",
                     "message": change_msg,
+                    "status": open_status,
                     "paths": list(paths),
                 }
             )
@@ -403,7 +427,7 @@ def run_branch_sync(
             if pending_message:
                 default_msg = f"open {op}: {source_branch} -> {target_branch}"
                 change_msg = build_change_message(submit_message or default_msg, pending_message)
-                open_multiple_paths(
+                open_status = open_multiple_paths(
                     paths,
                     target_branch,
                     "p4_update_log.txt",
@@ -413,8 +437,9 @@ def run_branch_sync(
                 records.append(
                     {
                         "branch": target_branch,
-                        "action": "open-only-by-no-submit",
+                        "action": "仅打开Pending（由no-submit触发）",
                         "message": change_msg,
+                        "status": open_status,
                         "paths": list(paths),
                     }
                 )
@@ -423,8 +448,9 @@ def run_branch_sync(
                 records.append(
                     {
                         "branch": target_branch,
-                        "action": "no-submit",
-                        "message": f"skip submit: {source_branch} -> {target_branch}",
+                        "action": "跳过提交",
+                        "message": f"跳过提交: {source_branch} -> {target_branch}",
+                        "status": "已跳过提交",
                         "paths": list(paths),
                     }
                 )
@@ -432,12 +458,13 @@ def run_branch_sync(
 
         default_msg = f"sync {op}: {source_branch} -> {target_branch}"
         commit_msg = build_change_message(submit_message or default_msg, pending_message)
-        submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
+        submit_status = submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
         records.append(
             {
                 "branch": target_branch,
-                "action": "submit",
+                "action": "提交",
                 "message": commit_msg,
+                "status": submit_status,
                 "paths": list(paths),
             }
         )
@@ -484,7 +511,7 @@ if __name__ == "__main__":
 
     if args.email:
         email_subject = build_change_message(
-            f"report {args.operation}: {args.source} -> {','.join(target_branches)}",
+            f"执行报告 {args.operation}: {args.source} -> {','.join(target_branches)}",
             args.pending_message,
         )
         email_body = build_email_report(
@@ -495,6 +522,6 @@ if __name__ == "__main__":
             pending_message=args.pending_message,
         )
         if args.dry_run:
-            print(f"Email skipped in dry-run mode: {args.email}")
+            print(f"预演模式不发送消息，目标邮箱: {args.email}")
         else:
             send_email_report(args.email, email_subject, email_body)
