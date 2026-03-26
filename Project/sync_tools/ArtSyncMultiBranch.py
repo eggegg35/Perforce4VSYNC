@@ -224,7 +224,7 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
 
 
 def build_change_message(base_msg: str, pending_message: str = None) -> str:
-    full_msg = f"p4-p4 {base_msg}"
+    full_msg = f"p4-bypass p4-admin-bypass {base_msg}"
     trimmed_pending = (pending_message or "").strip()
     if trimmed_pending:
         full_msg = f"{full_msg} {trimmed_pending}"
@@ -296,12 +296,12 @@ def run_branch_sync(
             print("[DRY-RUN] open files to pending (--open-only)")
             if pending_message:
                 print(f"[DRY-RUN] pending message: {pending_message}")
-                print("[DRY-RUN] pending desc format: p4-p4 <normal message> <pending-message>")
+                print("[DRY-RUN] pending desc format: p4-bypass p4-admin-bypass <normal message> <pending-message>")
         elif no_submit:
             print("[DRY-RUN] skip submit (--no-submit)")
         elif pending_message:
             print(f"[DRY-RUN] pending message: {pending_message}")
-            print("[DRY-RUN] submit desc format: p4-p4 <normal message> <pending-message>")
+            print("[DRY-RUN] submit desc format: p4-bypass p4-admin-bypass <normal message> <pending-message>")
         return
 
     for target_branch in target_branches:
@@ -355,7 +355,7 @@ if __name__ == "__main__":
     parser.add_argument("--message", default=None, help="可选提交说明")
     parser.add_argument("--no-submit", action="store_true", help="只更新+拷贝/删除，不执行提交")
     parser.add_argument("--open-only", action="store_true", help="只打开到默认 pending，不提交")
-    parser.add_argument("--pending-message", default=None, help="追加说明；描述统一格式为 p4-p4 + 默认说明 + 该内容")
+    parser.add_argument("--pending-message", default=None, help="追加说明；描述统一格式为 p4-bypass p4-admin-bypass + 默认说明 + 该内容")
     parser.add_argument("--dry-run", action="store_true", help="仅打印将要执行的步骤，不实际执行")
     args = parser.parse_args()
 
