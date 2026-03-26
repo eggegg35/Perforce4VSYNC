@@ -54,7 +54,7 @@ if __name__ == '__main__':
     parser.add_argument('--message', default=None, help='可选提交说明')
     parser.add_argument('--no-submit', action='store_true', help='只更新+拷贝/删除，不执行提交')
     parser.add_argument('--open-only', action='store_true', help='只打开到 pending，不提交')
-    parser.add_argument('--pending-message', default=None, help='追加说明；描述统一格式为 p4-p4 + 默认说明 + 该内容')
+    parser.add_argument('--pending-message', default=None, help='追加说明；描述统一格式为 p4-bypass p4-admin-bypass + 默认说明 + 该内容')
     parser.add_argument('--email', default=None, help='可选：将执行日志发送到该邮箱')
     parser.add_argument('--dry-run', action='store_true', help='仅打印将要执行的步骤，不实际执行')
     args = parser.parse_args()
