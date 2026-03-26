@@ -234,13 +234,19 @@ def open_multiple_paths(
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
     # Keep open-only behavior aligned with submit: include paired .meta files.
     open_list = list(dict.fromkeys(generate_meta_file_paths(path_list)))
-    change_id = "New" if pending_message else "default"
-    change_msg = pending_message or open_msg
+    base_msg = f"p4-p4 {open_msg}"
+    trimmed_pending = (pending_message or "").strip()
+    change_id = "New" if trimmed_pending else "default"
+    if trimmed_pending:
+        change_msg = f"{base_msg} {trimmed_pending}"
+    else:
+        change_msg = base_msg
     P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
     if change_id == "default":
         print(f"已加入默认 pending: {open_list}")
     else:
         print(f"已加入新建 pending: {open_list}")
+        print(f"pending desc: {change_msg}")
 
 
 def apply_operation(paths: List[str], source_branch: str, target_branch: str, operation: str):
@@ -286,6 +292,7 @@ def run_branch_sync(
             print("[DRY-RUN] open files to pending (--open-only)")
             if pending_message:
                 print(f"[DRY-RUN] pending message: {pending_message}")
+                print("[DRY-RUN] pending desc format: p4-p4 <normal message> <pending-message>")
         elif no_submit:
             print("[DRY-RUN] skip submit (--no-submit)")
         return
@@ -330,7 +337,7 @@ if __name__ == "__main__":
     parser.add_argument("--message", default=None, help="可选提交说明")
     parser.add_argument("--no-submit", action="store_true", help="只更新+拷贝/删除，不执行提交")
     parser.add_argument("--open-only", action="store_true", help="只打开到默认 pending，不提交")
-    parser.add_argument("--pending-message", default=None, help="仅 --open-only 时有效：创建新 pending 并使用该说明")
+    parser.add_argument("--pending-message", default=None, help="仅 --open-only 时有效：新建 pending，说明格式为 p4-p4 + 默认说明 + 该内容")
     parser.add_argument("--dry-run", action="store_true", help="仅打印将要执行的步骤，不实际执行")
     args = parser.parse_args()
 
