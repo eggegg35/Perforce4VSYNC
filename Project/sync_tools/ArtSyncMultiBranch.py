@@ -31,6 +31,18 @@ DEFAULT_MSG_API = "http://10.8.45.67:3106/lark_tools_send_msg"
 DEFAULT_TXT_DOWNLOAD_DIR = r"C:\Git\Perforce4VSYNC\Project\List"
 REQUIRED_BRANCH_FIELDS = ("root", "workspace", "p4_user")
 
+
+def _safe_print(message: str):
+    text = str(message)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout.buffer.write((text + "\n").encode(encoding, errors="replace"))
+        else:
+            print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
 _ACTIVE_CONFIG = None
 
 
@@ -97,7 +109,7 @@ def process_file(file_path: str) -> str:
                     paths.append(line)
             return ", ".join(paths)
     except Exception as e:
-        print(f"璇诲彇鍒楄〃鏂囦欢澶辫触: {e}")
+        _safe_print(f"璇诲彇鍒楄〃鏂囦欢澶辫触: {e}")
         return ""
 
 
@@ -122,7 +134,7 @@ def remove_single_file(file_path: str):
             os.chmod(file_path, stat.S_IWRITE)
             os.remove(file_path)
         except Exception as e:
-            print(f"鍒犻櫎鏂囦欢澶辫触: {file_path}, 閿欒: {e}")
+            _safe_print(f"鍒犻櫎鏂囦欢澶辫触: {file_path}, 閿欒: {e}")
 
 
 def copy_single_file(src_file: str, dst_file: str):
@@ -135,7 +147,7 @@ def copy_single_file(src_file: str, dst_file: str):
             os.remove(dst_file)
         shutil.copy2(src_file, dst_file)
     except Exception as e:
-        print(f"鎷疯礉鏂囦欢澶辫触: {src_file} -> {dst_file}, 閿欒: {e}")
+        _safe_print(f"鎷疯礉鏂囦欢澶辫触: {src_file} -> {dst_file}, 閿欒: {e}")
 
 
 def sync_folder_meta(source_folder: str, target_folder: str):
@@ -160,7 +172,7 @@ def delete_target_path(path: str):
         try:
             shutil.rmtree(path, onerror=on_rm_error)
         except Exception as e:
-            print(f"鍒犻櫎鐩綍澶辫触: {path}, 閿欒: {e}")
+            _safe_print(f"鍒犻櫎鐩綍澶辫触: {path}, 閿欒: {e}")
     remove_single_file(f"{path}.meta")
 
 
@@ -246,14 +258,14 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
     sub_list = generate_meta_file_paths(path_list)
     result = P4Tool.p4_commitpathlist(sub_list, commmitMsg=submit_msg)
-    print(f"Submit path summary: {summarize_paths_for_log(path_list)}")
+    _safe_print(f"Submit path summary: {summarize_paths_for_log(path_list)}")
     if result is True:
-        print(f"Branch {branch_key} submit success.")
+        _safe_print(f"Branch {branch_key} submit success.")
         return "success"
     if result is False:
-        print(f"Branch {branch_key} not submitted (possibly no changelist content).")
+        _safe_print(f"Branch {branch_key} not submitted (possibly no changelist content).")
         return "not_submitted"
-    print(f"Branch {branch_key} submit failed, please check p4 logs.")
+    _safe_print(f"Branch {branch_key} submit failed, please check p4 logs.")
     return "failed"
 
 
@@ -308,16 +320,16 @@ def send_email_report(to_email: str, subject: str, body: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             ret = resp.read().decode("utf-8", errors="ignore")
-        print(f"娑堟伅宸插彂閫佸埌閭: {to_email}, 杩斿洖: {ret}")
+        _safe_print(f"娑堟伅宸插彂閫佸埌閭: {to_email}, 杩斿洖: {ret}")
         return True
     except urllib.error.HTTPError as e:
-        print(f"鍙戦€佹秷鎭け璐? HTTP {e.code} {e.reason}")
+        _safe_print(f"鍙戦€佹秷鎭け璐? HTTP {e.code} {e.reason}")
         return False
     except urllib.error.URLError as e:
-        print(f"鍙戦€佹秷鎭け璐? {e.reason}")
+        _safe_print(f"鍙戦€佹秷鎭け璐? {e.reason}")
         return False
     except Exception as e:
-        print(f"鍙戦€佹秷鎭け璐? {e}")
+        _safe_print(f"鍙戦€佹秷鎭け璐? {e}")
         return False
 
 
@@ -336,12 +348,12 @@ def open_multiple_paths(
     change_msg = build_change_message(open_msg, pending_message)
     P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
 
-    print(f"鍒嗘敮 {branch_key} 璺緞鎽樿: {summarize_paths_for_log(path_list)}")
+    _safe_print(f"鍒嗘敮 {branch_key} 璺緞鎽樿: {summarize_paths_for_log(path_list)}")
     if change_id == "default":
-        print("Added to default pending.")
+        _safe_print("Added to default pending.")
     else:
-        print("Added to new pending.")
-        print(f"pending 鎻忚堪: {change_msg}")
+        _safe_print("Added to new pending.")
+        _safe_print(f"pending 鎻忚堪: {change_msg}")
     return "宸插姞鍏ending锛堣鍦≒4涓‘璁わ級"
 
 
@@ -373,28 +385,28 @@ def run_branch_sync(
         validate_branch_config(target_branch)
 
     if not paths:
-        print("Error: at least one sync path is required.")
+        _safe_print("Error: at least one sync path is required.")
         sys.exit(1)
 
     op = operation.lower()
     if op not in ("add", "modify", "delete"):
-        print("閿欒: operation 浠呮敮鎸?add / modify / delete")
+        _safe_print("閿欒: operation 浠呮敮鎸?add / modify / delete")
         sys.exit(1)
 
     if dry_run:
-        print(f"[棰勬紨] 婧愬垎鏀?{source_branch} 鐩爣鍒嗘敮={','.join(target_branches)} 鎿嶄綔={op}")
-        print(f"[棰勬紨] 鏂囦欢鎽樿: {summarize_paths_for_log(paths)}")
-        print(f"[棰勬紨] 鏂囦欢鏁伴噺: {len(paths)}")
+        _safe_print(f"[棰勬紨] 婧愬垎鏀?{source_branch} 鐩爣鍒嗘敮={','.join(target_branches)} 鎿嶄綔={op}")
+        _safe_print(f"[棰勬紨] 鏂囦欢鎽樿: {summarize_paths_for_log(paths)}")
+        _safe_print(f"[棰勬紨] 鏂囦欢鏁伴噺: {len(paths)}")
         if open_only or (no_submit and pending_message):
-            print("[DRY-RUN] Will open files to pending (--open-only).")
+            _safe_print("[DRY-RUN] Will open files to pending (--open-only).")
             if pending_message:
-                print(f"[棰勬紨] 杩藉姞璇存槑: {pending_message}")
-                print("[棰勬紨] 鎻忚堪鏍煎紡: p4-p4 <榛樿璇存槑> <pending-message>")
+                _safe_print(f"[棰勬紨] 杩藉姞璇存槑: {pending_message}")
+                _safe_print("[棰勬紨] 鎻忚堪鏍煎紡: p4-p4 <榛樿璇存槑> <pending-message>")
         elif no_submit:
-            print("[DRY-RUN] Will skip submit (--no-submit).")
+            _safe_print("[DRY-RUN] Will skip submit (--no-submit).")
         elif pending_message:
-            print(f"[棰勬紨] 杩藉姞璇存槑: {pending_message}")
-            print("[棰勬紨] 鎻愪氦鎻忚堪鏍煎紡: p4-p4 <榛樿璇存槑> <pending-message>")
+            _safe_print(f"[棰勬紨] 杩藉姞璇存槑: {pending_message}")
+            _safe_print("[棰勬紨] 鎻愪氦鎻忚堪鏍煎紡: p4-p4 <榛樿璇存槑> <pending-message>")
         return records
 
     for target_branch in target_branches:
@@ -446,7 +458,7 @@ def run_branch_sync(
                     }
                 )
             else:
-                print(f"Skipped submit (--no-submit): {source_branch} -> {target_branch}")
+                _safe_print(f"Skipped submit (--no-submit): {source_branch} -> {target_branch}")
                 records.append(
                     {
                         "branch": target_branch,
@@ -483,18 +495,18 @@ def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> L
     txtname = (txtname_arg or "").strip()
 
     if files_text and txtname:
-        print("Error: use only one of --files or --txtname.")
+        _safe_print("Error: use only one of --files or --txtname.")
         sys.exit(1)
 
     if not files_text and not txtname:
-        print("Error: either --files or --txtname is required.")
+        _safe_print("Error: either --files or --txtname is required.")
         sys.exit(1)
 
     if files_text:
         raw_paths = parse_csv_values(files_text)
         normalized = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
         if not normalized:
-            print("Error: --files does not contain valid paths.")
+            _safe_print("Error: --files does not contain valid paths.")
             sys.exit(1)
         return normalized
 
@@ -503,19 +515,19 @@ def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> L
         output_path=DEFAULT_TXT_DOWNLOAD_DIR,
     )
     if download_code != 0:
-        print(f"Error: download txt from MinIO failed, code={download_code}")
+        _safe_print(f"Error: download txt from MinIO failed, code={download_code}")
         sys.exit(download_code)
 
     local_txt_path = os.path.join(DEFAULT_TXT_DOWNLOAD_DIR, os.path.basename(txtname))
     paths_text = process_file(local_txt_path)
     if not paths_text:
-        print(f"Error: no valid sync path found in txt: {local_txt_path}")
+        _safe_print(f"Error: no valid sync path found in txt: {local_txt_path}")
         sys.exit(1)
 
     raw_paths = parse_csv_values(paths_text)
     normalized = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
     if not normalized:
-        print(f"Error: no valid sync path after normalization: {local_txt_path}")
+        _safe_print(f"Error: no valid sync path after normalization: {local_txt_path}")
         sys.exit(1)
     return normalized
 
@@ -566,7 +578,7 @@ if __name__ == "__main__":
             pending_message=args.pending_message,
         )
         if args.dry_run:
-            print(f"棰勬紨妯″紡涓嶅彂閫佹秷鎭紝鐩爣閭: {args.email}")
+            _safe_print(f"棰勬紨妯″紡涓嶅彂閫佹秷鎭紝鐩爣閭: {args.email}")
         else:
             send_email_report(args.email, email_subject, email_body)
 
