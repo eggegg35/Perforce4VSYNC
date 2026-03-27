@@ -276,29 +276,38 @@ def build_email_report(
     operation: str,
     pending_message: str = None,
 ) -> str:
+    status_map = {
+        "success": "\u6210\u529f",
+        "not_submitted": "\u672a\u63d0\u4ea4",
+        "failed": "\u5931\u8d25",
+        "skipped": "\u5df2\u8df3\u8fc7",
+    }
+
     lines = [
-        "ArtSync 鎵ц鎶ュ憡",
-        f"鏃堕棿: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"婧愬垎鏀? {source_branch}",
-        f"鐩爣鍒嗘敮: {','.join(target_branches)}",
-        f"鎿嶄綔绫诲瀷: {operation}",
+        "ArtSync \u6267\u884c\u62a5\u544a",
+        f"\u65f6\u95f4: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"\u6e90\u5206\u652f: {source_branch}",
+        f"\u76ee\u6807\u5206\u652f: {','.join(target_branches)}",
+        f"\u64cd\u4f5c\u7c7b\u578b: {operation}",
     ]
     if pending_message:
-        lines.append(f"杩藉姞璇存槑: {pending_message}")
+        lines.append(f"\u8ffd\u52a0\u8bf4\u660e: {pending_message}")
     lines.append("")
-    lines.append("鎵ц璁板綍:")
+    lines.append("\u6267\u884c\u8bb0\u5f55:")
 
     if not records:
-        lines.append("- No records")
+        lines.append("- \u65e0\u8bb0\u5f55")
     else:
         for record in records:
+            status_value = str(record.get("status", ""))
+            status_text = status_map.get(status_value, status_value)
             lines.append(
-                f"- 鍒嗘敮={record['branch']} 鍔ㄤ綔={record['action']} 鐘舵€?{record['status']} 璇存槑={record['message']}"
+                f"- \u5206\u652f={record.get('branch', '')} \u52a8\u4f5c={record.get('action', '')} \u72b6\u6001={status_text} \u8bf4\u660e={record.get('message', '')}"
             )
             path_summary = summarize_paths_for_log(record.get("paths", []))
-            lines.append(f"  鏂囦欢鎽樿: {path_summary}")
-            lines.append(f"  鏂囦欢鏁伴噺: {len(record.get('paths', []))}")
-            lines.append("  澶囨敞: 宸茶嚜鍔ㄥ鐞嗗搴?.meta")
+            lines.append(f"  \u6587\u4ef6\u6458\u8981: {path_summary}")
+            lines.append(f"  \u6587\u4ef6\u6570\u91cf: {len(record.get('paths', []))}")
+            lines.append("  \u5907\u6ce8: \u5df2\u81ea\u52a8\u5904\u7406\u5bf9\u5e94 .meta")
 
     return "\n".join(lines)
 
@@ -320,16 +329,16 @@ def send_email_report(to_email: str, subject: str, body: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             ret = resp.read().decode("utf-8", errors="ignore")
-        _safe_print(f"娑堟伅宸插彂閫佸埌閭: {to_email}, 杩斿洖: {ret}")
+        _safe_print(f"\u6d88\u606f\u5df2\u53d1\u9001\u5230\u90ae\u7bb1: {to_email}, \u8fd4\u56de: {ret}")
         return True
     except urllib.error.HTTPError as e:
-        _safe_print(f"鍙戦€佹秷鎭け璐? HTTP {e.code} {e.reason}")
+        _safe_print(f"\u6d88\u606f\u53d1\u9001\u5931\u8d25: HTTP {e.code} {e.reason}")
         return False
     except urllib.error.URLError as e:
-        _safe_print(f"鍙戦€佹秷鎭け璐? {e.reason}")
+        _safe_print(f"\u6d88\u606f\u53d1\u9001\u5931\u8d25: {e.reason}")
         return False
     except Exception as e:
-        _safe_print(f"鍙戦€佹秷鎭け璐? {e}")
+        _safe_print(f"\u6d88\u606f\u53d1\u9001\u5931\u8d25: {e}")
         return False
 
 
@@ -348,13 +357,14 @@ def open_multiple_paths(
     change_msg = build_change_message(open_msg, pending_message)
     P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
 
-    _safe_print(f"鍒嗘敮 {branch_key} 璺緞鎽樿: {summarize_paths_for_log(path_list)}")
+    _safe_print(f"\u5206\u652f {branch_key} \u8def\u5f84\u6458\u8981: {summarize_paths_for_log(path_list)}")
     if change_id == "default":
-        _safe_print("Added to default pending.")
+        _safe_print("\u5df2\u52a0\u5165\u9ed8\u8ba4 pending\u3002")
     else:
-        _safe_print("Added to new pending.")
-        _safe_print(f"pending 鎻忚堪: {change_msg}")
-    return "宸插姞鍏ending锛堣鍦≒4涓‘璁わ級"
+        _safe_print("\u5df2\u52a0\u5165\u65b0\u5efa pending\u3002")
+        _safe_print(f"pending \u63cf\u8ff0: {change_msg}")
+    return "\u5df2\u52a0\u5165 pending\uff08\u8bf7\u5728 P4 \u4e2d\u786e\u8ba4\uff09"
+
 
 
 def apply_operation(paths: List[str], source_branch: str, target_branch: str, operation: str):
@@ -536,7 +546,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sync files from Art branch to target branches")
     parser.add_argument("--branches", required=True, help="Target branches, comma separated, e.g. 001,feature")
     parser.add_argument("--files", required=False, help="Sync files or folders, comma separated")
-    parser.add_argument("--txtname", required=False, help="MinIO list txt object name; downloaded into C:\Git\Perforce4VSYNC\Project\List")
+    parser.add_argument("--txtname", required=False, help="MinIO list txt object name; downloaded into C:\\Git\\Perforce4VSYNC\\Project\\List")
     parser.add_argument("--operation", required=True, choices=["add", "modify", "delete"], help="File operation type")
     parser.add_argument("--source", default=DEFAULT_SOURCE_BRANCH, help="Source branch, default art")
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="Branch config JSON path")
@@ -567,7 +577,7 @@ if __name__ == "__main__":
 
     if args.email:
         email_subject = build_change_message(
-            f"鎵ц鎶ュ憡 {args.operation}: {args.source} -> {','.join(target_branches)}",
+            f"\u6267\u884c\u62a5\u544a {args.operation}: {args.source} -> {','.join(target_branches)}",
             args.pending_message,
         )
         email_body = build_email_report(
@@ -578,7 +588,7 @@ if __name__ == "__main__":
             pending_message=args.pending_message,
         )
         if args.dry_run:
-            _safe_print(f"棰勬紨妯″紡涓嶅彂閫佹秷鎭紝鐩爣閭: {args.email}")
+            _safe_print(f"\u9884\u6f14\u6a21\u5f0f\u4e0d\u53d1\u9001\u6d88\u606f\uff0c\u76ee\u6807\u90ae\u7bb1: {args.email}")
         else:
             send_email_report(args.email, email_subject, email_body)
 
