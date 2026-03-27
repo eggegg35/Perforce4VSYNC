@@ -293,7 +293,7 @@ def make_view_popups(switchboard, root, extrapath):
     dirs = [os.path.dirname(__file__)] + extrapath
     for dir in dirs:
         if dir == '':
-            dir = ''
+            dir = '.'
         for file in os.listdir(dir):
             if file[-9:] == 'Viewer.py':
                 name = file[:-3]

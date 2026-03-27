@@ -1,0 +1,12 @@
+﻿{
+  "minio": {
+    "endpoint": "10.8.45.67:9919",
+    "access_key": "minioadmin",
+    "secret_key": "minioadmin",
+    "secure": false,
+    "bucket_name": "engineuse"
+  },
+  "download": {
+    "default_output_dir": "D:/Temp"
+  }
+}

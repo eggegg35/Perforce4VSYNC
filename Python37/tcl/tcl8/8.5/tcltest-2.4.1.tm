@@ -2095,7 +2095,7 @@ proc tcltest::test {name description args} {
     if {[IsVerbose msec] || [IsVerbose usec]} {
 	set t [expr {[clock microseconds] - $timeStart}]
 	if {[IsVerbose usec]} {
-	    puts [outputChannel] "++++ $name took $t ¦Ìs"
+	    puts [outputChannel] "++++ $name took $t Î¼s"
 	}
 	if {[IsVerbose msec]} {
 	    puts [outputChannel] "++++ $name took [expr {round($t/1000.)}] ms"

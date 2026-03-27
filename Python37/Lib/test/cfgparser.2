@@ -239,12 +239,12 @@
 # or the operation will fail. Check that groups exist if forcing a 
 # group.
 # Script for domain controller for adding machines:
-; add user script = /usr/sbin/useradd -d /dev/null -g machines ¨Cc
+; add user script = /usr/sbin/useradd -d /dev/null -g machines â€“c
 # 'Machine Account' -s /bin/false -M %u
 # Script for domain controller with LDAP backend for adding machines 
 #(please
 # configure in /etc/samba/smbldap_conf.pm first):
-; add user script = /usr/share/samba/scripts/smbldap-useradd.pl -w ¨Cd
+; add user script = /usr/share/samba/scripts/smbldap-useradd.pl -w â€“d
 # /dev/null -g machines -c 'Machine Account' -s /bin/false %u
 # Script for domain member for adding local accounts for authenticated
 # users:
