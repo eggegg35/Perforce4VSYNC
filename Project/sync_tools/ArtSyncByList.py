@@ -4,18 +4,18 @@ import ArtSyncMultiBranch
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='按列表文件执行分支同步')
-    parser.add_argument('--list-file', required=True, help='列表文件路径（每行一个相对路径）')
-    parser.add_argument('--branches', required=True, help='目标分支，英文逗号分隔，例如: 001,feature')
-    parser.add_argument('--operation', required=True, choices=['add', 'modify', 'delete'], help='文件操作类型')
-    parser.add_argument('--source', default=ArtSyncMultiBranch.DEFAULT_SOURCE_BRANCH, help='源分支，默认 art')
-    parser.add_argument('--config', default=ArtSyncMultiBranch.DEFAULT_CONFIG_PATH, help='分支配置 JSON 路径')
-    parser.add_argument('--message', default=None, help='可选提交说明')
-    parser.add_argument('--no-submit', action='store_true', help='只更新+拷贝/删除，不执行提交')
-    parser.add_argument('--open-only', action='store_true', help='只打开到 pending，不提交')
-    parser.add_argument('--pending-message', default=None, help='追加说明；描述统一格式为 p4-bypass p4-admin-bypass + 默认说明 + 该内容')
-    parser.add_argument('--email', default=None, help='可选：将执行日志发送到该邮箱')
-    parser.add_argument('--dry-run', action='store_true', help='仅打印将要执行的步骤，不实际执行')
+    parser = argparse.ArgumentParser(description='Run branch sync with file list')
+    parser.add_argument('--list-file', required=True, help='鍒楄〃鏂囦欢璺緞锛堟瘡琛屼竴涓浉瀵硅矾寰勶級')
+    parser.add_argument('--branches', required=True, help='鐩爣鍒嗘敮锛岃嫳鏂囬€楀彿鍒嗛殧锛屼緥濡? 001,feature')
+    parser.add_argument('--operation', required=True, choices=['add', 'modify', 'delete'], help='鏂囦欢鎿嶄綔绫诲瀷')
+    parser.add_argument('--source', default=ArtSyncMultiBranch.DEFAULT_SOURCE_BRANCH, help='婧愬垎鏀紝榛樿 art')
+    parser.add_argument('--config', default=ArtSyncMultiBranch.DEFAULT_CONFIG_PATH, help='鍒嗘敮閰嶇疆 JSON 璺緞')
+    parser.add_argument('--message', default=None, help='Optional submit message')
+    parser.add_argument('--no-submit', action='store_true', help='鍙洿鏂?鎷疯礉/鍒犻櫎锛屼笉鎵ц鎻愪氦')
+    parser.add_argument('--open-only', action='store_true', help='鍙墦寮€鍒?pending锛屼笉鎻愪氦')
+    parser.add_argument('--pending-message', default=None, help='Extra text for changelist description, format: p4-p4 + default message + pending-message')
+    parser.add_argument('--email', default=None, help='Optional: send execution log to this email')
+    parser.add_argument('--dry-run', action='store_true', help='浠呮墦鍗板皢瑕佹墽琛岀殑姝ラ锛屼笉瀹為檯鎵ц')
     args = parser.parse_args()
 
     ArtSyncMultiBranch.set_active_config(args.config)
@@ -51,3 +51,4 @@ if __name__ == '__main__':
             print(f'\u9884\u6f14\u6a21\u5f0f\u4e0d\u53d1\u9001\u6d88\u606f\uff0c\u76ee\u6807\u90ae\u7bb1: {args.email}')
         else:
             ArtSyncMultiBranch.send_email_report(args.email, email_subject, email_body)
+

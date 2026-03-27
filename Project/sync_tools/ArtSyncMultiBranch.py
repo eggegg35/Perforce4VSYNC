@@ -21,12 +21,14 @@ from clear_folder import clear_folder
 from clear_asset import clear_asset
 from copy_folder import copy_folder
 from copy_asset import copy_asset
+from MinIODownloadByConfig import ExecutionDownloadWithConfig
 
 BASE_DIR = SCRIPT_DIR
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, "branches.json")
 DEFAULT_SOURCE_BRANCH = "art"
 DEFAULT_MSG_API = "http://10.8.45.67:3106/lark_tools_send_msg"
+DEFAULT_TXT_DOWNLOAD_DIR = r"C:\Git\Perforce4VSYNC\Project\List"
 REQUIRED_BRANCH_FIELDS = ("root", "workspace", "p4_user")
 
 _ACTIVE_CONFIG = None
@@ -36,7 +38,7 @@ def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> dict:
     with open(config_path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     if "branches" not in data:
-        raise ValueError("配置文件必须包含 branches 字段。")
+        raise ValueError("Config must contain a branches field.")
     return data
 
 
@@ -50,7 +52,7 @@ def get_branch_config(branch_key: str) -> dict:
         set_active_config(DEFAULT_CONFIG_PATH)
     branches = _ACTIVE_CONFIG.get("branches", {})
     if branch_key not in branches:
-        raise ValueError(f"配置中不存在分支: {branch_key}")
+        raise ValueError(f"閰嶇疆涓笉瀛樺湪鍒嗘敮: {branch_key}")
     return branches[branch_key]
 
 
@@ -60,7 +62,7 @@ def validate_branch_config(branch_key: str):
         value = str(branch_cfg.get(field, "")).strip()
         if not value:
             raise ValueError(
-                f"分支 {branch_key} 的配置项 {field} 为空，请先更新配置文件: {DEFAULT_CONFIG_PATH}"
+                f"鍒嗘敮 {branch_key} 鐨勯厤缃」 {field} 涓虹┖锛岃鍏堟洿鏂伴厤缃枃浠? {DEFAULT_CONFIG_PATH}"
             )
 
 
@@ -95,7 +97,7 @@ def process_file(file_path: str) -> str:
                     paths.append(line)
             return ", ".join(paths)
     except Exception as e:
-        print(f"读取列表文件失败: {e}")
+        print(f"璇诲彇鍒楄〃鏂囦欢澶辫触: {e}")
         return ""
 
 
@@ -120,7 +122,7 @@ def remove_single_file(file_path: str):
             os.chmod(file_path, stat.S_IWRITE)
             os.remove(file_path)
         except Exception as e:
-            print(f"删除文件失败: {file_path}, 错误: {e}")
+            print(f"鍒犻櫎鏂囦欢澶辫触: {file_path}, 閿欒: {e}")
 
 
 def copy_single_file(src_file: str, dst_file: str):
@@ -133,7 +135,7 @@ def copy_single_file(src_file: str, dst_file: str):
             os.remove(dst_file)
         shutil.copy2(src_file, dst_file)
     except Exception as e:
-        print(f"拷贝文件失败: {src_file} -> {dst_file}, 错误: {e}")
+        print(f"鎷疯礉鏂囦欢澶辫触: {src_file} -> {dst_file}, 閿欒: {e}")
 
 
 def sync_folder_meta(source_folder: str, target_folder: str):
@@ -158,7 +160,7 @@ def delete_target_path(path: str):
         try:
             shutil.rmtree(path, onerror=on_rm_error)
         except Exception as e:
-            print(f"删除目录失败: {path}, 错误: {e}")
+            print(f"鍒犻櫎鐩綍澶辫触: {path}, 閿欒: {e}")
     remove_single_file(f"{path}.meta")
 
 
@@ -217,7 +219,7 @@ def build_unlocal_paths(paths: List[str], root_prefix: str) -> List[str]:
 
 
 def build_change_message(base_msg: str, pending_message: str = None) -> str:
-    full_msg = f"p4-bypass p4-admin-bypass {base_msg}"
+    full_msg = f"p4-p4 {base_msg}"
     trimmed_pending = (pending_message or "").strip()
     if trimmed_pending:
         full_msg = f"{full_msg} {trimmed_pending}"
@@ -227,16 +229,16 @@ def build_change_message(base_msg: str, pending_message: str = None) -> str:
 def summarize_paths_for_log(paths: List[str], max_chars: int = 140) -> str:
     valid_paths = [p for p in paths if p]
     if not valid_paths:
-        return "无文件"
+        return "no files"
 
-    joined = "，".join(valid_paths)
+    joined = ", ".join(valid_paths)
     if len(joined) <= max_chars:
         return joined
 
     if len(valid_paths) == 1:
         return valid_paths[0]
 
-    return f"同步了{valid_paths[0]}等{len(valid_paths)}个文件"
+    return f"{valid_paths[0]} and {len(valid_paths) - 1} more files"
 
 
 def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, submit_msg: str) -> str:
@@ -244,15 +246,15 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
     sub_list = generate_meta_file_paths(path_list)
     result = P4Tool.p4_commitpathlist(sub_list, commmitMsg=submit_msg)
-    print(f"提交路径摘要: {summarize_paths_for_log(path_list)}")
+    print(f"Submit path summary: {summarize_paths_for_log(path_list)}")
     if result is True:
-        print(f"分支 {branch_key} 提交成功。")
-        return "成功"
+        print(f"Branch {branch_key} submit success.")
+        return "success"
     if result is False:
-        print(f"分支 {branch_key} 未提交（可能没有可提交变更）。")
-        return "未提交"
-    print(f"分支 {branch_key} 提交失败，请查看 p4 日志。")
-    return "失败"
+        print(f"Branch {branch_key} not submitted (possibly no changelist content).")
+        return "not_submitted"
+    print(f"Branch {branch_key} submit failed, please check p4 logs.")
+    return "failed"
 
 
 def build_email_report(
@@ -263,28 +265,28 @@ def build_email_report(
     pending_message: str = None,
 ) -> str:
     lines = [
-        "ArtSync 执行报告",
-        f"时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"源分支: {source_branch}",
-        f"目标分支: {','.join(target_branches)}",
-        f"操作类型: {operation}",
+        "ArtSync 鎵ц鎶ュ憡",
+        f"鏃堕棿: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"婧愬垎鏀? {source_branch}",
+        f"鐩爣鍒嗘敮: {','.join(target_branches)}",
+        f"鎿嶄綔绫诲瀷: {operation}",
     ]
     if pending_message:
-        lines.append(f"追加说明: {pending_message}")
+        lines.append(f"杩藉姞璇存槑: {pending_message}")
     lines.append("")
-    lines.append("执行记录:")
+    lines.append("鎵ц璁板綍:")
 
     if not records:
-        lines.append("- 无记录")
+        lines.append("- No records")
     else:
         for record in records:
             lines.append(
-                f"- 分支={record['branch']} 动作={record['action']} 状态={record['status']} 说明={record['message']}"
+                f"- 鍒嗘敮={record['branch']} 鍔ㄤ綔={record['action']} 鐘舵€?{record['status']} 璇存槑={record['message']}"
             )
             path_summary = summarize_paths_for_log(record.get("paths", []))
-            lines.append(f"  文件摘要: {path_summary}")
-            lines.append(f"  文件数量: {len(record.get('paths', []))}")
-            lines.append("  备注: 已自动处理对应 .meta")
+            lines.append(f"  鏂囦欢鎽樿: {path_summary}")
+            lines.append(f"  鏂囦欢鏁伴噺: {len(record.get('paths', []))}")
+            lines.append("  澶囨敞: 宸茶嚜鍔ㄥ鐞嗗搴?.meta")
 
     return "\n".join(lines)
 
@@ -306,16 +308,16 @@ def send_email_report(to_email: str, subject: str, body: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             ret = resp.read().decode("utf-8", errors="ignore")
-        print(f"消息已发送到邮箱: {to_email}, 返回: {ret}")
+        print(f"娑堟伅宸插彂閫佸埌閭: {to_email}, 杩斿洖: {ret}")
         return True
     except urllib.error.HTTPError as e:
-        print(f"发送消息失败: HTTP {e.code} {e.reason}")
+        print(f"鍙戦€佹秷鎭け璐? HTTP {e.code} {e.reason}")
         return False
     except urllib.error.URLError as e:
-        print(f"发送消息失败: {e.reason}")
+        print(f"鍙戦€佹秷鎭け璐? {e.reason}")
         return False
     except Exception as e:
-        print(f"发送消息失败: {e}")
+        print(f"鍙戦€佹秷鎭け璐? {e}")
         return False
 
 
@@ -334,13 +336,13 @@ def open_multiple_paths(
     change_msg = build_change_message(open_msg, pending_message)
     P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
 
-    print(f"分支 {branch_key} 路径摘要: {summarize_paths_for_log(path_list)}")
+    print(f"鍒嗘敮 {branch_key} 璺緞鎽樿: {summarize_paths_for_log(path_list)}")
     if change_id == "default":
-        print("已加入默认 pending。")
+        print("Added to default pending.")
     else:
-        print("已加入新建 pending。")
-        print(f"pending 描述: {change_msg}")
-    return "已加入Pending（请在P4中确认）"
+        print("Added to new pending.")
+        print(f"pending 鎻忚堪: {change_msg}")
+    return "宸插姞鍏ending锛堣鍦≒4涓‘璁わ級"
 
 
 def apply_operation(paths: List[str], source_branch: str, target_branch: str, operation: str):
@@ -371,28 +373,28 @@ def run_branch_sync(
         validate_branch_config(target_branch)
 
     if not paths:
-        print("错误: 需要至少一个同步文件路径")
+        print("Error: at least one sync path is required.")
         sys.exit(1)
 
     op = operation.lower()
     if op not in ("add", "modify", "delete"):
-        print("错误: operation 仅支持 add / modify / delete")
+        print("閿欒: operation 浠呮敮鎸?add / modify / delete")
         sys.exit(1)
 
     if dry_run:
-        print(f"[预演] 源分支={source_branch} 目标分支={','.join(target_branches)} 操作={op}")
-        print(f"[预演] 文件摘要: {summarize_paths_for_log(paths)}")
-        print(f"[预演] 文件数量: {len(paths)}")
+        print(f"[棰勬紨] 婧愬垎鏀?{source_branch} 鐩爣鍒嗘敮={','.join(target_branches)} 鎿嶄綔={op}")
+        print(f"[棰勬紨] 鏂囦欢鎽樿: {summarize_paths_for_log(paths)}")
+        print(f"[棰勬紨] 鏂囦欢鏁伴噺: {len(paths)}")
         if open_only or (no_submit and pending_message):
-            print("[预演] 将打开到 Pending（--open-only）。")
+            print("[DRY-RUN] Will open files to pending (--open-only).")
             if pending_message:
-                print(f"[预演] 追加说明: {pending_message}")
-                print("[预演] 描述格式: p4-bypass p4-admin-bypass <默认说明> <pending-message>")
+                print(f"[棰勬紨] 杩藉姞璇存槑: {pending_message}")
+                print("[棰勬紨] 鎻忚堪鏍煎紡: p4-p4 <榛樿璇存槑> <pending-message>")
         elif no_submit:
-            print("[预演] 将跳过提交（--no-submit）。")
+            print("[DRY-RUN] Will skip submit (--no-submit).")
         elif pending_message:
-            print(f"[预演] 追加说明: {pending_message}")
-            print("[预演] 提交描述格式: p4-bypass p4-admin-bypass <默认说明> <pending-message>")
+            print(f"[棰勬紨] 杩藉姞璇存槑: {pending_message}")
+            print("[棰勬紨] 鎻愪氦鎻忚堪鏍煎紡: p4-p4 <榛樿璇存槑> <pending-message>")
         return records
 
     for target_branch in target_branches:
@@ -415,7 +417,7 @@ def run_branch_sync(
             records.append(
                 {
                     "branch": target_branch,
-                    "action": "仅打开Pending",
+                    "action": "浠呮墦寮€Pending",
                     "message": change_msg,
                     "status": open_status,
                     "paths": list(paths),
@@ -437,20 +439,20 @@ def run_branch_sync(
                 records.append(
                     {
                         "branch": target_branch,
-                        "action": "仅打开Pending（由no-submit触发）",
+                        "action": "open_pending_by_no_submit",
                         "message": change_msg,
                         "status": open_status,
                         "paths": list(paths),
                     }
                 )
             else:
-                print(f"已跳过提交（--no-submit）: {source_branch} -> {target_branch}")
+                print(f"Skipped submit (--no-submit): {source_branch} -> {target_branch}")
                 records.append(
                     {
                         "branch": target_branch,
-                        "action": "跳过提交",
-                        "message": f"跳过提交: {source_branch} -> {target_branch}",
-                        "status": "已跳过提交",
+                        "action": "skip_submit",
+                        "message": f"Skip submit: {source_branch} -> {target_branch}",
+                        "status": "skipped",
                         "paths": list(paths),
                     }
                 )
@@ -462,7 +464,7 @@ def run_branch_sync(
         records.append(
             {
                 "branch": target_branch,
-                "action": "提交",
+                "action": "submit",
                 "message": commit_msg,
                 "status": submit_status,
                 "paths": list(paths),
@@ -476,26 +478,68 @@ def parse_csv_values(raw: str) -> List[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
+def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> List[str]:
+    files_text = (files_arg or "").strip()
+    txtname = (txtname_arg or "").strip()
+
+    if files_text and txtname:
+        print("Error: use only one of --files or --txtname.")
+        sys.exit(1)
+
+    if not files_text and not txtname:
+        print("Error: either --files or --txtname is required.")
+        sys.exit(1)
+
+    if files_text:
+        raw_paths = parse_csv_values(files_text)
+        normalized = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
+        if not normalized:
+            print("Error: --files does not contain valid paths.")
+            sys.exit(1)
+        return normalized
+
+    download_code = ExecutionDownloadWithConfig(
+        object_name=txtname,
+        output_path=DEFAULT_TXT_DOWNLOAD_DIR,
+    )
+    if download_code != 0:
+        print(f"Error: download txt from MinIO failed, code={download_code}")
+        sys.exit(download_code)
+
+    local_txt_path = os.path.join(DEFAULT_TXT_DOWNLOAD_DIR, os.path.basename(txtname))
+    paths_text = process_file(local_txt_path)
+    if not paths_text:
+        print(f"Error: no valid sync path found in txt: {local_txt_path}")
+        sys.exit(1)
+
+    raw_paths = parse_csv_values(paths_text)
+    normalized = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
+    if not normalized:
+        print(f"Error: no valid sync path after normalization: {local_txt_path}")
+        sys.exit(1)
+    return normalized
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="将 Art 分支内容同步到目标分支")
-    parser.add_argument("--branches", required=True, help="目标分支，英文逗号分隔。例如: 001,feature")
-    parser.add_argument("--files", required=True, help="需要同步的文件或目录，英文逗号分隔")
-    parser.add_argument("--operation", required=True, choices=["add", "modify", "delete"], help="文件操作类型")
-    parser.add_argument("--source", default=DEFAULT_SOURCE_BRANCH, help="源分支，默认 art")
-    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="分支配置 JSON 路径")
-    parser.add_argument("--message", default=None, help="可选提交说明")
-    parser.add_argument("--no-submit", action="store_true", help="只更新+拷贝/删除，不执行提交")
-    parser.add_argument("--open-only", action="store_true", help="只打开到默认 pending，不提交")
-    parser.add_argument("--pending-message", default=None, help="追加说明；描述统一格式为 p4-bypass p4-admin-bypass + 默认说明 + 该内容")
-    parser.add_argument("--email", default=None, help="可选：将执行日志发送到该邮箱")
-    parser.add_argument("--dry-run", action="store_true", help="仅打印将要执行的步骤，不实际执行")
+    parser = argparse.ArgumentParser(description="Sync files from Art branch to target branches")
+    parser.add_argument("--branches", required=True, help="Target branches, comma separated, e.g. 001,feature")
+    parser.add_argument("--files", required=False, help="Sync files or folders, comma separated")
+    parser.add_argument("--txtname", required=False, help="MinIO list txt object name; downloaded into C:\Git\Perforce4VSYNC\Project\List")
+    parser.add_argument("--operation", required=True, choices=["add", "modify", "delete"], help="File operation type")
+    parser.add_argument("--source", default=DEFAULT_SOURCE_BRANCH, help="Source branch, default art")
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="Branch config JSON path")
+    parser.add_argument("--message", default=None, help="Optional submit message")
+    parser.add_argument("--no-submit", action="store_true", help="Do sync action but skip submit")
+    parser.add_argument("--open-only", action="store_true", help="Only open files to pending, do not submit")
+    parser.add_argument("--pending-message", default=None, help="Extra text for changelist description, format: p4-p4 + default message + pending-message")
+    parser.add_argument("--email", default=None, help="Optional: send execution log to this email")
+    parser.add_argument("--dry-run", action="store_true", help="Print actions only, do not execute")
     args = parser.parse_args()
 
     set_active_config(args.config)
 
     target_branches = parse_csv_values(args.branches)
-    raw_paths = parse_csv_values(args.files)
-    normalized_paths = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
+    normalized_paths = resolve_paths_from_args(files_arg=args.files, txtname_arg=args.txtname)
 
     run_records = run_branch_sync(
         target_branches=target_branches,
@@ -511,7 +555,7 @@ if __name__ == "__main__":
 
     if args.email:
         email_subject = build_change_message(
-            f"执行报告 {args.operation}: {args.source} -> {','.join(target_branches)}",
+            f"鎵ц鎶ュ憡 {args.operation}: {args.source} -> {','.join(target_branches)}",
             args.pending_message,
         )
         email_body = build_email_report(
@@ -522,6 +566,7 @@ if __name__ == "__main__":
             pending_message=args.pending_message,
         )
         if args.dry_run:
-            print(f"预演模式不发送消息，目标邮箱: {args.email}")
+            print(f"棰勬紨妯″紡涓嶅彂閫佹秷鎭紝鐩爣閭: {args.email}")
         else:
             send_email_report(args.email, email_subject, email_body)
+
