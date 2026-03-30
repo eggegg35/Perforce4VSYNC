@@ -19,9 +19,7 @@ if PROJECT_ROOT not in sys.path:
 import P4Tool
 
 from clear_folder import clear_folder
-from clear_asset import clear_asset
 from copy_folder import copy_folder
-from copy_asset import copy_asset
 from MinIODownloadByConfig import ExecutionDownloadWithConfig
 
 BASE_DIR = SCRIPT_DIR
@@ -121,7 +119,7 @@ def is_unity_folder(path: str) -> bool:
 
 def clear_target_path(path: str):
     if not is_unity_folder(path):
-        clear_asset(path)
+        remove_single_file(path)
     else:
         clear_folder(path)
 
@@ -159,7 +157,7 @@ def sync_folder_meta(source_folder: str, target_folder: str):
 
 def delete_target_path(path: str):
     if not is_unity_folder(path):
-        clear_asset(path)
+        remove_single_file(path)
         return
 
     if os.path.isdir(path):
@@ -171,7 +169,6 @@ def delete_target_path(path: str):
             shutil.rmtree(path, onerror=on_rm_error)
         except Exception as e:
             _safe_print(f"鍒犻櫎鐩綍澶辫触: {path}, 閿欒: {e}")
-    remove_single_file(f"{path}.meta")
 
 
 def copy_between_branches(target_path: str, source_branch: str, target_branch: str):
@@ -181,10 +178,9 @@ def copy_between_branches(target_path: str, source_branch: str, target_branch: s
     clear_target_path(target_path_full)
 
     if not is_unity_folder(source_path):
-        copy_asset(source_path, target_path_full)
+        copy_single_file(source_path, target_path_full)
     else:
         copy_folder(source_path, target_path_full)
-        sync_folder_meta(source_path, target_path_full)
 
 
 def generate_meta_file_paths(input_list: List[str]) -> List[str]:
