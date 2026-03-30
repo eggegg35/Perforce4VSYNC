@@ -29,6 +29,7 @@ DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, "branches.json")
 DEFAULT_SOURCE_BRANCH = "art"
 DEFAULT_MSG_API = "http://10.8.45.67:3106/lark_tools_send_msg"
 DEFAULT_TXT_DOWNLOAD_DIR = r"C:\Git\Perforce4VSYNC\Project\List"
+DEFAULT_MINIO_STREAM_PREFIX = "StreamSync"
 REQUIRED_BRANCH_FIELDS = ("root", "workspace", "p4_user")
 
 
@@ -516,8 +517,16 @@ def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> L
             sys.exit(1)
         return normalized
 
+    normalized_txtname = txtname.replace("\\", "/").lstrip("/")
+    if "/" not in normalized_txtname:
+        object_name = f"{DEFAULT_MINIO_STREAM_PREFIX}/{normalized_txtname}"
+    else:
+        object_name = normalized_txtname
+
+    _safe_print(f"MinIO object: {object_name}")
+
     download_code = ExecutionDownloadWithConfig(
-        object_name=txtname,
+        object_name=object_name,
         output_path=DEFAULT_TXT_DOWNLOAD_DIR,
     )
     if download_code != 0:
@@ -542,7 +551,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sync files from Art branch to target branches")
     parser.add_argument("--branches", required=True, help="Target branches, comma separated, e.g. 001,feature")
     parser.add_argument("--files", required=False, help="Sync files or folders, comma separated")
-    parser.add_argument("--txtname", required=False, help="MinIO list txt object name; downloaded into C:\\Git\\Perforce4VSYNC\\Project\\List")
+    parser.add_argument("--txtname", required=False, help="MinIO list txt object name; default prefix StreamSync/, downloaded into C:\\Git\\Perforce4VSYNC\\Project\\List")
     parser.add_argument("--operation", required=True, choices=["add", "modify", "delete"], help="File operation type")
     parser.add_argument("--source", default=DEFAULT_SOURCE_BRANCH, help="Source branch, default art")
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="Branch config JSON path")
