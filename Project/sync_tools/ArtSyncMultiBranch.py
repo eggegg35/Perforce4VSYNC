@@ -497,6 +497,33 @@ def parse_csv_values(raw: str) -> List[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
+def normalize_branch_key(branch_key: str) -> str:
+    return str(branch_key or "").strip().lower()
+
+
+def prepare_target_branches(raw_targets: List[str], source_branch: str) -> List[str]:
+    source_key = normalize_branch_key(source_branch)
+    cleaned: List[str] = []
+    skipped_same = False
+    for raw in raw_targets:
+        key = normalize_branch_key(raw)
+        if not key:
+            continue
+        if key == source_key:
+            skipped_same = True
+            continue
+        if key not in cleaned:
+            cleaned.append(key)
+
+    if skipped_same:
+        _safe_print(f"Warning: target branches include source branch '{source_key}', skipped same-branch sync.")
+
+    if not cleaned:
+        _safe_print("Error: no valid target branches after filtering source branch.")
+        sys.exit(1)
+    return cleaned
+
+
 def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> List[str]:
     files_text = (files_arg or "").strip()
     txtname = (txtname_arg or "").strip()
@@ -573,14 +600,19 @@ if __name__ == "__main__":
 
     set_active_config(args.config)
 
-    target_branches = parse_csv_values(args.branches)
+    source_branch = normalize_branch_key(args.source)
+    if not source_branch:
+        _safe_print("Error: source branch is empty.")
+        sys.exit(1)
+
+    target_branches = prepare_target_branches(parse_csv_values(args.branches), source_branch)
     normalized_paths = resolve_paths_from_args(files_arg=args.files, txtname_arg=args.txtname)
 
     run_records = run_branch_sync(
         target_branches=target_branches,
         paths=normalized_paths,
         operation=args.operation,
-        source_branch=args.source,
+        source_branch=source_branch,
         submit_message=args.message,
         no_submit=args.no_submit,
         open_only=args.open_only,
@@ -590,12 +622,12 @@ if __name__ == "__main__":
 
     if args.email:
         email_subject = build_change_message(
-            f"\u6267\u884c\u62a5\u544a {args.operation}: {args.source} -> {','.join(target_branches)}",
+            f"\u6267\u884c\u62a5\u544a {args.operation}: {source_branch} -> {','.join(target_branches)}",
             args.pending_message,
         )
         email_body = build_email_report(
             records=run_records,
-            source_branch=args.source,
+            source_branch=source_branch,
             target_branches=target_branches,
             operation=args.operation,
             pending_message=args.pending_message,
