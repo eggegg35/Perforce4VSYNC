@@ -271,6 +271,25 @@ def extract_submit_failure_reason(log_file: str, start_size: int) -> str:
     if not lines:
         return ""
 
+    trigger_flag = "[P4-Trigger ERROR]"
+    trigger_indices = [idx for idx, line in enumerate(lines) if trigger_flag in line]
+    if trigger_indices:
+        start_idx = trigger_indices[0] + 1
+        end_idx = len(lines)
+        if len(trigger_indices) > 1:
+            end_idx = trigger_indices[1]
+
+        trigger_lines: List[str] = []
+        for line in lines[start_idx:end_idx]:
+            if line.startswith("-" * 3):
+                break
+            stripped = line.strip()
+            if stripped:
+                trigger_lines.append(stripped)
+
+        if trigger_lines:
+            return "\n".join(trigger_lines[:8])
+
     for line in reversed(lines):
         if "Error:" in line:
             return line.split("Error:", 1)[1].strip() or line
@@ -314,24 +333,31 @@ def build_email_report(
         "skipped": "\u5df2\u8df3\u8fc7",
     }
 
-    lines = ["ArtSync \u6267\u884c\u62a5\u544a"]
+    lines = ["# ArtSync \u6267\u884c\u62a5\u544a"]
 
-    lines.append("\u63d0\u4ea4\u72b6\u6001:")
+    lines.append("## \u63d0\u4ea4\u72b6\u6001")
     if not records:
         lines.append("- \u65e0\u8bb0\u5f55")
     else:
         for record in records:
             status_value = str(record.get("status", ""))
             status_text = status_map.get(status_value, status_value)
-            lines.append(f"- \u5206\u652f {record.get('branch', '')}: {status_text}")
+            lines.append(f"### \u5206\u652f {record.get('branch', '')}: {status_text}")
             if status_value == "failed":
                 reason = str(record.get("reason", "")).strip()
                 if reason:
-                    lines.append(f"  \u5931\u8d25\u539f\u56e0: {reason}")
+                    reason_lines = [line for line in reason.splitlines() if line.strip()]
+                    if len(reason_lines) <= 1:
+                        lines.append(f"  \u5931\u8d25\u539f\u56e0: {reason_lines[0] if reason_lines else reason}")
+                    else:
+                        lines.append("  \u5931\u8d25\u539f\u56e0:")
+                        for item in reason_lines:
+                            lines.append(f"    {item}")
 
     lines.extend(
         [
             "",
+            "## \u57fa\u672c\u4fe1\u606f",
             f"\u65f6\u95f4: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"\u6e90\u5206\u652f: {source_branch}",
             f"\u76ee\u6807\u5206\u652f: {','.join(target_branches)}",
@@ -341,7 +367,7 @@ def build_email_report(
     if pending_message:
         lines.append(f"\u8ffd\u52a0\u8bf4\u660e: {pending_message}")
     lines.append("")
-    lines.append("\u6267\u884c\u8bb0\u5f55:")
+    lines.append("## \u6267\u884c\u8bb0\u5f55")
 
     if not records:
         lines.append("- \u65e0\u8bb0\u5f55")
