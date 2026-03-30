@@ -8,7 +8,7 @@ import stat
 import datetime
 import urllib.request
 import urllib.error
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -187,20 +187,18 @@ def copy_between_branches(target_path: str, source_branch: str, target_branch: s
 
 
 def generate_meta_file_paths(input_list: List[str]) -> List[str]:
-    output_list = []
+    # Keep exact list only; do not auto-expand to .meta
+    output_list: List[str] = []
     for file_path in input_list:
-        output_list.append(file_path)
-        if not file_path.lower().endswith(".meta"):
-            output_list.append(f"{file_path}.meta")
+        if file_path and file_path not in output_list:
+            output_list.append(file_path)
     return output_list
 
 
 def build_sync_targets(full_path: str) -> List[str]:
     normalized = os.path.normpath(full_path)
-    targets = [normalized]
-    if not normalized.lower().endswith(".meta"):
-        targets.append(f"{normalized}.meta")
-    return targets
+    # Update exact list only; do not auto-expand to .meta
+    return [normalized]
 
 
 def setup_p4_args(branch_key: str, log_file: str):
@@ -250,20 +248,56 @@ def summarize_paths_for_log(paths: List[str], max_chars: int = 140) -> str:
     return f"{valid_paths[0]} and {len(valid_paths) - 1} more files"
 
 
-def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, submit_msg: str) -> str:
+def get_log_file_size(log_file: str) -> int:
+    log_path = log_file if os.path.isabs(log_file) else os.path.join(SCRIPT_DIR, log_file)
+    if not os.path.isfile(log_path):
+        return 0
+    return os.path.getsize(log_path)
+
+
+def extract_submit_failure_reason(log_file: str, start_size: int) -> str:
+    log_path = log_file if os.path.isabs(log_file) else os.path.join(SCRIPT_DIR, log_file)
+    if not os.path.isfile(log_path):
+        return ""
+
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(max(0, start_size))
+            delta = f.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+    lines = [line.strip() for line in delta.splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    for line in reversed(lines):
+        if "Error:" in line:
+            return line.split("Error:", 1)[1].strip() or line
+
+    for line in reversed(lines):
+        lowered = line.lower()
+        if ("fail" in lowered) or ("can't" in lowered) or ("cannot" in lowered) or ("denied" in lowered):
+            return line
+
+    return lines[-1][:300]
+
+
+def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, submit_msg: str) -> Tuple[str, str]:
     setup_p4_args(branch_key, log_file)
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
     sub_list = generate_meta_file_paths(path_list)
+    start_size = get_log_file_size(log_file)
     result = P4Tool.p4_commitpathlist(sub_list, commmitMsg=submit_msg)
     _safe_print(f"Submit path summary: {summarize_paths_for_log(path_list)}")
     if result is True:
         _safe_print(f"Branch {branch_key} submit success.")
-        return "success"
+        return "success", ""
     if result is False:
         _safe_print(f"Branch {branch_key} not submitted (possibly no changelist content).")
-        return "not_submitted"
+        return "not_submitted", ""
     _safe_print(f"Branch {branch_key} submit failed, please check p4 logs.")
-    return "failed"
+    return "failed", extract_submit_failure_reason(log_file, start_size)
 
 
 def build_email_report(
@@ -280,13 +314,30 @@ def build_email_report(
         "skipped": "\u5df2\u8df3\u8fc7",
     }
 
-    lines = [
-        "ArtSync \u6267\u884c\u62a5\u544a",
-        f"\u65f6\u95f4: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"\u6e90\u5206\u652f: {source_branch}",
-        f"\u76ee\u6807\u5206\u652f: {','.join(target_branches)}",
-        f"\u64cd\u4f5c\u7c7b\u578b: {operation}",
-    ]
+    lines = ["ArtSync \u6267\u884c\u62a5\u544a"]
+
+    lines.append("\u63d0\u4ea4\u72b6\u6001:")
+    if not records:
+        lines.append("- \u65e0\u8bb0\u5f55")
+    else:
+        for record in records:
+            status_value = str(record.get("status", ""))
+            status_text = status_map.get(status_value, status_value)
+            lines.append(f"- \u5206\u652f {record.get('branch', '')}: {status_text}")
+            if status_value == "failed":
+                reason = str(record.get("reason", "")).strip()
+                if reason:
+                    lines.append(f"  \u5931\u8d25\u539f\u56e0: {reason}")
+
+    lines.extend(
+        [
+            "",
+            f"\u65f6\u95f4: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"\u6e90\u5206\u652f: {source_branch}",
+            f"\u76ee\u6807\u5206\u652f: {','.join(target_branches)}",
+            f"\u64cd\u4f5c\u7c7b\u578b: {operation}",
+        ]
+    )
     if pending_message:
         lines.append(f"\u8ffd\u52a0\u8bf4\u660e: {pending_message}")
     lines.append("")
@@ -301,10 +352,16 @@ def build_email_report(
             lines.append(
                 f"- \u5206\u652f={record.get('branch', '')} \u52a8\u4f5c={record.get('action', '')} \u72b6\u6001={status_text} \u8bf4\u660e={record.get('message', '')}"
             )
-            path_summary = summarize_paths_for_log(record.get("paths", []))
-            lines.append(f"  \u6587\u4ef6\u6458\u8981: {path_summary}")
+            record_paths = [str(p) for p in record.get("paths", []) if str(p).strip()]
+            prefab_paths = [p for p in record_paths if p.lower().endswith(".prefab")]
+            if prefab_paths:
+                lines.append("  \u6587\u4ef6\u6458\u8981(.prefab):")
+                for prefab in prefab_paths:
+                    lines.append(f"    {prefab}")
+            else:
+                path_summary = summarize_paths_for_log(record_paths)
+                lines.append(f"  \u6587\u4ef6\u6458\u8981: {path_summary}")
             lines.append(f"  \u6587\u4ef6\u6570\u91cf: {len(record.get('paths', []))}")
-            lines.append("  \u5907\u6ce8: \u5df2\u81ea\u52a8\u5904\u7406\u5bf9\u5e94 .meta")
 
     return "\n".join(lines)
 
@@ -479,13 +536,14 @@ def run_branch_sync(
 
         default_msg = f"sync {op}: {source_branch} -> {target_branch}"
         commit_msg = build_change_message(submit_message or default_msg, pending_message)
-        submit_status = submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
+        submit_status, submit_reason = submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
         records.append(
             {
                 "branch": target_branch,
                 "action": "submit",
                 "message": commit_msg,
                 "status": submit_status,
+                "reason": submit_reason,
                 "paths": list(paths),
             }
         )
