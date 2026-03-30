@@ -86,10 +86,6 @@ def normalize_repo_path(path: str) -> str:
     normalized = path.strip().replace("\\", "/")
     if not normalized:
         return ""
-    if normalized.lower().endswith(".meta"):
-        normalized = normalized[:-5]
-    if not normalized:
-        return ""
     if not normalized.startswith("unity_project/"):
         normalized = f"unity_project/{normalized}"
     return normalized
