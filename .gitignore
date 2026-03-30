@@ -3,3 +3,4 @@ Project/__pycache__
 Project/sync_tools/__pycache__
 Python37/Lib/__pycache__
 Python37/Lib/encodings/__pycache__
+*.pyc
