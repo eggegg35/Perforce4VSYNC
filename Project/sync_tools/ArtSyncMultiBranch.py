@@ -518,17 +518,25 @@ def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> L
         return normalized
 
     normalized_txtname = txtname.replace("\\", "/").lstrip("/")
-    if "/" not in normalized_txtname:
-        object_name = f"{DEFAULT_MINIO_STREAM_PREFIX}/{normalized_txtname}"
+    candidate_objects: List[str] = []
+    if "/" in normalized_txtname:
+        candidate_objects.append(normalized_txtname)
     else:
-        object_name = normalized_txtname
+        candidate_objects.append(f"{DEFAULT_MINIO_STREAM_PREFIX}/{normalized_txtname}")
+        candidate_objects.append(normalized_txtname)
 
-    _safe_print(f"MinIO object: {object_name}")
+    download_code = 5
+    for idx, object_name in enumerate(candidate_objects):
+        _safe_print(f"MinIO object: {object_name}")
+        download_code = ExecutionDownloadWithConfig(
+            object_name=object_name,
+            output_path=DEFAULT_TXT_DOWNLOAD_DIR,
+        )
+        if download_code == 0:
+            break
+        if idx < len(candidate_objects) - 1:
+            _safe_print("MinIO object not found in current path, retrying fallback path...")
 
-    download_code = ExecutionDownloadWithConfig(
-        object_name=object_name,
-        output_path=DEFAULT_TXT_DOWNLOAD_DIR,
-    )
     if download_code != 0:
         _safe_print(f"Error: download txt from MinIO failed, code={download_code}")
         sys.exit(download_code)
