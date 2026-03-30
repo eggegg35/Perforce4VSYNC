@@ -8,6 +8,7 @@ import stat
 import datetime
 import urllib.request
 import urllib.error
+import re
 from typing import List, Dict, Any, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -249,16 +250,32 @@ def summarize_paths_for_log(paths: List[str], max_chars: int = 140) -> str:
 
 
 def get_log_file_size(log_file: str) -> int:
-    log_path = log_file if os.path.isabs(log_file) else os.path.join(SCRIPT_DIR, log_file)
-    if not os.path.isfile(log_path):
+    candidate_paths: List[str] = []
+    if os.path.isabs(log_file):
+        candidate_paths.append(log_file)
+    else:
+        candidate_paths.append(os.path.join(os.getcwd(), log_file))
+        candidate_paths.append(os.path.join(SCRIPT_DIR, log_file))
+
+    existing = [p for p in candidate_paths if os.path.isfile(p)]
+    if not existing:
         return 0
-    return os.path.getsize(log_path)
+    newest = max(existing, key=lambda p: os.path.getmtime(p))
+    return os.path.getsize(newest)
 
 
 def extract_submit_failure_reason(log_file: str, start_size: int) -> str:
-    log_path = log_file if os.path.isabs(log_file) else os.path.join(SCRIPT_DIR, log_file)
-    if not os.path.isfile(log_path):
-        return ""
+    candidate_paths: List[str] = []
+    if os.path.isabs(log_file):
+        candidate_paths.append(log_file)
+    else:
+        candidate_paths.append(os.path.join(os.getcwd(), log_file))
+        candidate_paths.append(os.path.join(SCRIPT_DIR, log_file))
+
+    existing = [p for p in candidate_paths if os.path.isfile(p)]
+    if not existing:
+        return "未捕获到日志文件，请检查 Jenkins 工作目录中的 p4_update_log.txt。"
+    log_path = max(existing, key=lambda p: os.path.getmtime(p))
 
     try:
         with open(log_path, "rb") as f:
@@ -269,26 +286,29 @@ def extract_submit_failure_reason(log_file: str, start_size: int) -> str:
 
     lines = [line.strip() for line in delta.splitlines() if line.strip()]
     if not lines:
-        return ""
+        return "日志中没有新增错误信息。"
 
-    trigger_flag = "[P4-Trigger ERROR]"
-    trigger_indices = [idx for idx, line in enumerate(lines) if trigger_flag in line]
+    trigger_pattern = re.compile(r"\[P4-Trigger\s+ERROR\]", re.IGNORECASE)
+    trigger_indices = [idx for idx, line in enumerate(lines) if trigger_pattern.search(line)]
     if trigger_indices:
         start_idx = trigger_indices[0] + 1
         end_idx = len(lines)
-        if len(trigger_indices) > 1:
-            end_idx = trigger_indices[1]
+        for idx in trigger_indices[1:]:
+            if idx > start_idx:
+                end_idx = idx
+                break
 
         trigger_lines: List[str] = []
         for line in lines[start_idx:end_idx]:
-            if line.startswith("-" * 3):
+            stripped = line.strip().strip("-").strip()
+            if not stripped:
+                continue
+            if trigger_pattern.search(stripped):
                 break
-            stripped = line.strip()
-            if stripped:
-                trigger_lines.append(stripped)
+            trigger_lines.append(stripped)
 
         if trigger_lines:
-            return "\n".join(trigger_lines[:8])
+            return "\n".join(trigger_lines[:10])
 
     for line in reversed(lines):
         if "Error:" in line:
@@ -317,6 +337,17 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
         return "not_submitted", ""
     _safe_print(f"Branch {branch_key} submit failed, please check p4 logs.")
     return "failed", extract_submit_failure_reason(log_file, start_size)
+
+
+def unlock_multiple_paths(paths: List[str], branch_key: str, log_file: str):
+    setup_p4_args(branch_key, log_file)
+    path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
+    unlock_list = list(dict.fromkeys(path_list))
+    try:
+        P4Tool.p4_UnLockFiles(unlock_list)
+        _safe_print(f"Branch {branch_key} unlock executed for {len(unlock_list)} files.")
+    except Exception as e:
+        _safe_print(f"Branch {branch_key} unlock failed: {e}")
 
 
 def build_email_report(
@@ -376,14 +407,14 @@ def build_email_report(
             status_value = str(record.get("status", ""))
             status_text = status_map.get(status_value, status_value)
             lines.append(
-                f"- \u5206\u652f={record.get('branch', '')} \u52a8\u4f5c={record.get('action', '')} \u72b6\u6001={status_text} \u8bf4\u660e={record.get('message', '')}"
+                f"- \u5206\u652f={record.get('branch', '')} \u52a8\u4f5c={record.get('action', '')} \u72b6\u6001={status_text}"
             )
             record_paths = [str(p) for p in record.get("paths", []) if str(p).strip()]
             prefab_paths = [p for p in record_paths if p.lower().endswith(".prefab")]
             if prefab_paths:
                 lines.append("  \u6587\u4ef6\u6458\u8981(.prefab):")
                 for prefab in prefab_paths:
-                    lines.append(f"    {prefab}")
+                    lines.append(f"    {os.path.basename(prefab)}")
             else:
                 path_summary = summarize_paths_for_log(record_paths)
                 lines.append(f"  \u6587\u4ef6\u6458\u8981: {path_summary}")
@@ -563,6 +594,8 @@ def run_branch_sync(
         default_msg = f"sync {op}: {source_branch} -> {target_branch}"
         commit_msg = build_change_message(submit_message or default_msg, pending_message)
         submit_status, submit_reason = submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
+        if submit_status == "failed":
+            unlock_multiple_paths(paths, target_branch, "p4_update_log.txt")
         records.append(
             {
                 "branch": target_branch,
@@ -705,10 +738,7 @@ if __name__ == "__main__":
     )
 
     if args.email:
-        email_subject = build_change_message(
-            f"\u6267\u884c\u62a5\u544a {args.operation}: {source_branch} -> {','.join(target_branches)}",
-            args.pending_message,
-        )
+        email_subject = "ArtSync \u6267\u884c\u62a5\u544a"
         email_body = build_email_report(
             records=run_records,
             source_branch=source_branch,
