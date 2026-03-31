@@ -417,6 +417,25 @@ def extract_submit_failure_reason(log_file: str, start_size: int) -> str:
     return lines[-1][:300]
 
 
+def is_no_change_result(text: str) -> bool:
+    raw = str(text or "").strip().lower()
+    if not raw:
+        return False
+    keywords = (
+        "no file need to commit",
+        "no files to submit",
+        "up-to-date",
+        "up to date",
+        "nochangeid",
+        "without changing any files",
+        "no changed files",
+        "no changed file",
+        "nothing to submit",
+        "already opened for add, no action taken",
+    )
+    return any(k in raw for k in keywords)
+
+
 def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, submit_msg: str) -> Tuple[str, str]:
     setup_p4_args(branch_key, log_file)
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
@@ -429,7 +448,7 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
         return "success", ""
     if result is False:
         _safe_print(f"Branch {branch_key} not submitted (possibly no changelist content).")
-        return "not_submitted", ""
+        return "not_submitted", "无变更文件"
     _safe_print(f"Branch {branch_key} submit failed, please check p4 logs.")
     return "failed", extract_submit_failure_reason(log_file, start_size)
 
@@ -470,16 +489,15 @@ def build_email_report(
             status_value = str(record.get("status", ""))
             status_text = status_map.get(status_value, status_value)
             lines.append(f"### \u5206\u652f {record.get('branch', '')}: {status_text}")
-            if status_value == "failed":
-                reason = str(record.get("reason", "")).strip()
-                if reason:
-                    reason_lines = [line for line in reason.splitlines() if line.strip()]
-                    if len(reason_lines) <= 1:
-                        lines.append(f"  \u5931\u8d25\u539f\u56e0: {reason_lines[0] if reason_lines else reason}")
-                    else:
-                        lines.append("  \u5931\u8d25\u539f\u56e0:")
-                        for item in reason_lines:
-                            lines.append(f"    {item}")
+            reason = str(record.get("reason", "")).strip()
+            if reason and status_value in ("failed", "not_submitted"):
+                reason_lines = [line for line in reason.splitlines() if line.strip()]
+                if len(reason_lines) <= 1:
+                    lines.append(f"  \u5931\u8d25\u539f\u56e0: {reason_lines[0] if reason_lines else reason}")
+                else:
+                    lines.append("  \u5931\u8d25\u539f\u56e0:")
+                    for item in reason_lines:
+                        lines.append(f"    {item}")
 
     lines.extend(
         [
@@ -555,28 +573,57 @@ def send_email_report(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
+def resolve_pending_change_id(branch_key: str, log_file: str, expected_desc: str) -> str:
+    setup_p4_args(branch_key, log_file)
+    try:
+        change_list = P4Tool.p4_get_local_changelist(False) or []
+    except Exception:
+        return ""
+
+    normalized_expected = str(expected_desc or "").strip()
+    candidates: List[int] = []
+    for item in change_list:
+        if not isinstance(item, dict):
+            continue
+        desc = str(item.get("desc", "")).strip()
+        if desc == normalized_expected:
+            try:
+                candidates.append(int(item.get("change", 0)))
+            except Exception:
+                pass
+    if not candidates:
+        return ""
+    return str(max(candidates))
+
+
 def open_multiple_paths(
     paths: List[str],
     branch_key: str,
     log_file: str,
     open_msg: str,
     pending_message: str = None,
-) -> str:
+    force_new: bool = False,
+) -> Tuple[str, str]:
     setup_p4_args(branch_key, log_file)
     path_list = build_unlocal_paths(paths, root_prefix=get_branch_config(branch_key)["root"])
     open_list = list(dict.fromkeys(generate_meta_file_paths(path_list)))
     trimmed_pending = (pending_message or "").strip()
-    change_id = "New" if trimmed_pending else "default"
+    use_new_change = force_new or bool(trimmed_pending)
+    change_id = "New" if use_new_change else "default"
     change_msg = build_change_message(open_msg, pending_message)
     P4Tool.p4_add_to_changelist(open_list, change_id, change_msg)
 
     _safe_print(f"\u5206\u652f {branch_key} \u8def\u5f84\u6458\u8981: {summarize_paths_for_log(path_list)}")
     if change_id == "default":
         _safe_print("\u5df2\u52a0\u5165\u9ed8\u8ba4 pending\u3002")
+        actual_change_id = "default"
     else:
         _safe_print("\u5df2\u52a0\u5165\u65b0\u5efa pending\u3002")
         _safe_print(f"pending \u63cf\u8ff0: {change_msg}")
-    return "\u5df2\u52a0\u5165 pending\uff08\u8bf7\u5728 P4 \u4e2d\u786e\u8ba4\uff09"
+        actual_change_id = resolve_pending_change_id(branch_key, log_file, change_msg)
+        if actual_change_id:
+            _safe_print(f"pending change id: {actual_change_id}")
+    return "\u5df2\u52a0\u5165 pending\uff08\u8bf7\u5728 P4 \u4e2d\u786e\u8ba4\uff09", actual_change_id
 
 
 
@@ -649,7 +696,7 @@ def run_branch_sync(
         if open_only:
             default_msg = f"open {op}: {source_branch} -> {target_branch}"
             change_msg = build_change_message(submit_message or default_msg, pending_message)
-            open_status = open_multiple_paths(
+            open_status, _ = open_multiple_paths(
                 paths,
                 target_branch,
                 "p4_update_log.txt",
@@ -671,7 +718,7 @@ def run_branch_sync(
             if pending_message:
                 default_msg = f"open {op}: {source_branch} -> {target_branch}"
                 change_msg = build_change_message(submit_message or default_msg, pending_message)
-                open_status = open_multiple_paths(
+                open_status, _ = open_multiple_paths(
                     paths,
                     target_branch,
                     "p4_update_log.txt",
@@ -704,22 +751,50 @@ def run_branch_sync(
         commit_msg = build_change_message(submit_message or default_msg, pending_message)
 
         if submit_method == "custom-submit":
-            open_multiple_paths(
+            _, opened_change_id = open_multiple_paths(
                 paths,
                 target_branch,
                 "p4_update_log.txt",
                 submit_message or default_msg,
-                pending_message=None,
+                pending_message=pending_message,
+                force_new=True,
             )
+            custom_change_id = str(submit_change or "").strip()
+            if custom_change_id.lower() in ("", "default", "auto"):
+                custom_change_id = opened_change_id
+            if not custom_change_id:
+                submit_status = "failed"
+                submit_reason = "custom submit failed: cannot resolve changelist id"
+                unlock_multiple_paths(paths, target_branch, "p4_update_log.txt")
+                records.append(
+                    {
+                        "branch": target_branch,
+                        "action": "submit",
+                        "message": commit_msg,
+                        "status": submit_status,
+                        "reason": submit_reason,
+                        "paths": list(paths),
+                    }
+                )
+                continue
+
             ok, custom_out = run_custom_submit_tool(
                 branch_key=target_branch,
                 tool_dir=submit_tool_dir or "",
-                change_id=submit_change,
+                change_id=custom_change_id,
                 python_cmd=submit_python,
                 submit_root=submit_root,
             )
-            submit_status = "success" if ok else "failed"
-            submit_reason = "" if ok else (custom_out or "custom submit failed")
+            if ok:
+                submit_status = "success"
+                submit_reason = ""
+            else:
+                if is_no_change_result(custom_out):
+                    submit_status = "not_submitted"
+                    submit_reason = "无变更文件"
+                else:
+                    submit_status = "failed"
+                    submit_reason = custom_out or "custom submit failed"
             if not ok:
                 unlock_multiple_paths(paths, target_branch, "p4_update_log.txt")
             records.append(
@@ -876,6 +951,8 @@ if __name__ == "__main__":
             args.submit_tool_dir = os.getenv("WORLDX_SUBMIT_TOOL_DIR", DEFAULT_WORLDX_SUBMIT_TOOL_DIR)
         if args.submit_python == "python":
             args.submit_python = sys.executable or "python"
+        if args.submit_change == "default":
+            args.submit_change = "auto"
 
     if args.submit_method == "custom-submit" and not args.submit_tool_dir:
         _safe_print("Error: --submit-tool-dir is required when --submit-method custom-submit")
