@@ -31,6 +31,7 @@ DEFAULT_MSG_API = "http://10.8.45.67:3106/lark_tools_send_msg"
 DEFAULT_TXT_DOWNLOAD_DIR = r"C:\Git\Perforce4VSYNC\Project\List"
 DEFAULT_MINIO_STREAM_PREFIX = "StreamSync"
 DEFAULT_WORLDX_SUBMIT_TOOL_DIR = r"C:\worldx_robot_HZPCC0420018_3458\tools\P4CustomTools\Tools\p4_submit"
+DEFAULT_LOCAL_LOG_DIR = r"D:\ArtSyncLogs"
 REQUIRED_BRANCH_FIELDS = ("root", "workspace", "p4_user")
 
 
@@ -44,6 +45,24 @@ def _safe_print(message: str):
             sys.stdout.buffer.write((text + "\n").encode(encoding, errors="replace"))
         else:
             print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
+
+def write_local_log(stage: str, params: Dict[str, Any] = None, reason: str = None):
+    try:
+        log_dir = os.getenv("ARTSYNC_LOCAL_LOG_DIR", DEFAULT_LOCAL_LOG_DIR).strip() or DEFAULT_LOCAL_LOG_DIR
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, f"ArtSyncMultiBranch_{datetime.datetime.now().strftime('%Y%m%d')}.log")
+        payload = {
+            "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "stage": stage,
+            "params": params or {},
+            "reason": reason or "",
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        # logging should never block main flow
+        pass
 
 _ACTIVE_CONFIG = None
 _PATH_WARNING_LOGS: List[str] = []
@@ -445,12 +464,27 @@ def submit_multiple_paths(paths: List[str], branch_key: str, log_file: str, subm
     _safe_print(f"Submit path summary: {summarize_paths_for_log(path_list)}")
     if result is True:
         _safe_print(f"Branch {branch_key} submit success.")
+        write_local_log(
+            stage="submit_success",
+            params={"branch": branch_key, "path_count": len(path_list), "submit_msg": submit_msg},
+        )
         return "success", ""
     if result is False:
         _safe_print(f"Branch {branch_key} not submitted (possibly no changelist content).")
+        write_local_log(
+            stage="submit_not_submitted",
+            params={"branch": branch_key, "path_count": len(path_list), "submit_msg": submit_msg},
+            reason="no changed files",
+        )
         return "not_submitted", "无变更文件"
     _safe_print(f"Branch {branch_key} submit failed, please check p4 logs.")
-    return "failed", extract_submit_failure_reason(log_file, start_size)
+    fail_reason = extract_submit_failure_reason(log_file, start_size)
+    write_local_log(
+        stage="submit_failed",
+        params={"branch": branch_key, "path_count": len(path_list), "submit_msg": submit_msg},
+        reason=fail_reason,
+    )
+    return "failed", fail_reason
 
 
 def unlock_multiple_paths(paths: List[str], branch_key: str, log_file: str):
@@ -655,6 +689,19 @@ def run_branch_sync(
     submit_python: str = "python",
     submit_root: str = None,
 ):
+    write_local_log(
+        stage="run_branch_sync_start",
+        params={
+            "source_branch": source_branch,
+            "target_branches": list(target_branches or []),
+            "operation": operation,
+            "path_count": len(paths or []),
+            "no_submit": no_submit,
+            "open_only": open_only,
+            "dry_run": dry_run,
+            "submit_method": submit_method,
+        },
+    )
     _PATH_WARNING_LOGS.clear()
     records: List[Dict[str, Any]] = []
     validate_branch_config(source_branch)
@@ -663,11 +710,21 @@ def run_branch_sync(
 
     if not paths:
         _safe_print("Error: at least one sync path is required.")
+        write_local_log(
+            stage="run_branch_sync_failed",
+            params={"source_branch": source_branch, "operation": operation},
+            reason="at least one sync path is required",
+        )
         sys.exit(1)
 
     op = operation.lower()
     if op not in ("add", "modify", "delete"):
         _safe_print("閿欒: operation 浠呮敮鎸?add / modify / delete")
+        write_local_log(
+            stage="run_branch_sync_failed",
+            params={"source_branch": source_branch, "operation": operation},
+            reason="invalid operation",
+        )
         sys.exit(1)
 
     if dry_run:
@@ -765,6 +822,11 @@ def run_branch_sync(
             if not custom_change_id:
                 submit_status = "failed"
                 submit_reason = "custom submit failed: cannot resolve changelist id"
+                write_local_log(
+                    stage="custom_submit_failed",
+                    params={"branch": target_branch, "operation": op},
+                    reason=submit_reason,
+                )
                 unlock_multiple_paths(paths, target_branch, "p4_update_log.txt")
                 records.append(
                     {
@@ -795,6 +857,11 @@ def run_branch_sync(
                 else:
                     submit_status = "failed"
                     submit_reason = custom_out or "custom submit failed"
+                write_local_log(
+                    stage="custom_submit_failed",
+                    params={"branch": target_branch, "operation": op},
+                    reason=submit_reason,
+                )
             if not ok:
                 unlock_multiple_paths(paths, target_branch, "p4_update_log.txt")
             records.append(
@@ -863,10 +930,20 @@ def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> L
 
     if files_text and txtname:
         _safe_print("Error: use only one of --files or --txtname.")
+        write_local_log(
+            stage="resolve_paths_failed",
+            params={"files_arg": files_arg, "txtname_arg": txtname_arg},
+            reason="both --files and --txtname are provided",
+        )
         sys.exit(1)
 
     if not files_text and not txtname:
         _safe_print("Error: either --files or --txtname is required.")
+        write_local_log(
+            stage="resolve_paths_failed",
+            params={"files_arg": files_arg, "txtname_arg": txtname_arg},
+            reason="neither --files nor --txtname is provided",
+        )
         sys.exit(1)
 
     if files_text:
@@ -874,6 +951,11 @@ def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> L
         normalized = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
         if not normalized:
             _safe_print("Error: --files does not contain valid paths.")
+            write_local_log(
+                stage="resolve_paths_failed",
+                params={"files_arg": files_arg},
+                reason="--files does not contain valid paths",
+            )
             sys.exit(1)
         return normalized
 
@@ -899,18 +981,33 @@ def resolve_paths_from_args(files_arg: str = None, txtname_arg: str = None) -> L
 
     if download_code != 0:
         _safe_print(f"Error: download txt from MinIO failed, code={download_code}")
+        write_local_log(
+            stage="resolve_paths_failed",
+            params={"txtname_arg": txtname_arg, "candidate_objects": candidate_objects},
+            reason=f"download txt from MinIO failed, code={download_code}",
+        )
         sys.exit(download_code)
 
     local_txt_path = os.path.join(DEFAULT_TXT_DOWNLOAD_DIR, os.path.basename(txtname))
     paths_text = process_file(local_txt_path)
     if not paths_text:
         _safe_print(f"Error: no valid sync path found in txt: {local_txt_path}")
+        write_local_log(
+            stage="resolve_paths_failed",
+            params={"txtname_arg": txtname_arg, "local_txt_path": local_txt_path},
+            reason="no valid sync path found in txt",
+        )
         sys.exit(1)
 
     raw_paths = parse_csv_values(paths_text)
     normalized = [normalize_repo_path(p) for p in raw_paths if normalize_repo_path(p)]
     if not normalized:
         _safe_print(f"Error: no valid sync path after normalization: {local_txt_path}")
+        write_local_log(
+            stage="resolve_paths_failed",
+            params={"txtname_arg": txtname_arg, "local_txt_path": local_txt_path},
+            reason="no valid sync path after normalization",
+        )
         sys.exit(1)
     return normalized
 
@@ -936,12 +1033,35 @@ if __name__ == "__main__":
     parser.add_argument("--submit-root", default=None, help="Repo root for custom submit tool, default derived from branch root")
     parser.add_argument("--worldx-submit", action="store_true", help="Use Worldx_Submit (run.py) with built-in default tool path")
     args = parser.parse_args()
+    write_local_log(
+        stage="cli_args",
+        params={
+            "source": args.source,
+            "branches": args.branches,
+            "files": args.files,
+            "txtname": args.txtname,
+            "operation": args.operation,
+            "message": args.message,
+            "no_submit": args.no_submit,
+            "open_only": args.open_only,
+            "pending_message": args.pending_message,
+            "email": args.email,
+            "dry_run": args.dry_run,
+            "submit_method": args.submit_method,
+            "submit_tool_dir": args.submit_tool_dir,
+            "submit_change": args.submit_change,
+            "submit_python": args.submit_python,
+            "submit_root": args.submit_root,
+            "worldx_submit": args.worldx_submit,
+        },
+    )
 
     set_active_config(args.config)
 
     source_branch = normalize_branch_key(args.source)
     if not source_branch:
         _safe_print("Error: source branch is empty.")
+        write_local_log(stage="cli_failed", params={"source": args.source}, reason="source branch is empty")
         sys.exit(1)
 
 
@@ -956,6 +1076,11 @@ if __name__ == "__main__":
 
     if args.submit_method == "custom-submit" and not args.submit_tool_dir:
         _safe_print("Error: --submit-tool-dir is required when --submit-method custom-submit")
+        write_local_log(
+            stage="cli_failed",
+            params={"submit_method": args.submit_method, "submit_tool_dir": args.submit_tool_dir},
+            reason="--submit-tool-dir is required when --submit-method custom-submit",
+        )
         sys.exit(1)
     target_branches = prepare_target_branches(parse_csv_values(args.branches), source_branch)
     normalized_paths = resolve_paths_from_args(files_arg=args.files, txtname_arg=args.txtname)
