@@ -44,6 +44,7 @@ def _safe_print(message: str):
             print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
 
 _ACTIVE_CONFIG = None
+_PATH_WARNING_LOGS: List[str] = []
 
 
 def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> dict:
@@ -109,19 +110,54 @@ def process_file(file_path: str) -> str:
         return ""
 
 
+
+
+def log_path_warning(message: str):
+    _safe_print(message)
+    if message not in _PATH_WARNING_LOGS:
+        _PATH_WARNING_LOGS.append(message)
+
+
 def is_unity_folder(path: str) -> bool:
     path = os.path.normpath(path)
-    name = os.path.basename(path)
     if os.path.exists(path):
         return os.path.isdir(path)
-    return "." not in name
+    return False
 
 
-def clear_target_path(path: str):
-    if not is_unity_folder(path):
-        remove_single_file(path)
-    else:
+def detect_path_kind(target_path: str, source_hint_path: str = None) -> str:
+    candidates = []
+    if source_hint_path:
+        candidates.append(source_hint_path)
+    candidates.append(target_path)
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return "folder" if os.path.isdir(candidate) else "file"
+
+    probe = source_hint_path or target_path
+    lower_probe = str(probe).lower()
+    if lower_probe.endswith(".meta"):
+        return "file"
+
+    base_name = os.path.basename(str(probe).rstrip("\\/"))
+    if os.path.splitext(base_name)[1]:
+        return "file"
+
+    return "unknown"
+
+
+def clear_target_path(path: str, path_kind: str = None):
+    kind = path_kind or detect_path_kind(path)
+    if kind == "folder":
+        if not os.path.exists(path):
+            log_path_warning(f"PathNotFound: {path}")
+            return
         clear_folder(path)
+        return
+
+    # file or unknown: clear as file only, no meta expansion
+    remove_single_file(path)
 
 
 def remove_single_file(file_path: str):
@@ -135,6 +171,7 @@ def remove_single_file(file_path: str):
 
 def copy_single_file(src_file: str, dst_file: str):
     if not os.path.isfile(src_file):
+        log_path_warning(f"SourceFileNotFound: {src_file}")
         return
     try:
         os.makedirs(os.path.dirname(dst_file), exist_ok=True)
@@ -143,21 +180,17 @@ def copy_single_file(src_file: str, dst_file: str):
             os.remove(dst_file)
         shutil.copy2(src_file, dst_file)
     except Exception as e:
-        _safe_print(f"鎷疯礉鏂囦欢澶辫触: {src_file} -> {dst_file}, 閿欒: {e}")
+        _safe_print(f"CopyFailed: {src_file} -> {dst_file}, Error: {e}")
 
 
-def sync_folder_meta(source_folder: str, target_folder: str):
-    source_meta = f"{source_folder}.meta"
-    target_meta = f"{target_folder}.meta"
-    if not os.path.isfile(source_meta):
-        remove_single_file(target_meta)
-        return
-    copy_single_file(source_meta, target_meta)
-
-
-def delete_target_path(path: str):
-    if not is_unity_folder(path):
+def delete_target_path(path: str, source_hint_path: str = None):
+    kind = detect_path_kind(path, source_hint_path)
+    if kind != "folder":
         remove_single_file(path)
+        return
+
+    if not os.path.exists(path):
+        log_path_warning(f"PathNotFound: {path}")
         return
 
     if os.path.isdir(path):
@@ -168,19 +201,30 @@ def delete_target_path(path: str):
         try:
             shutil.rmtree(path, onerror=on_rm_error)
         except Exception as e:
-            _safe_print(f"鍒犻櫎鐩綍澶辫触: {path}, 閿欒: {e}")
+            _safe_print(f"DeleteFolderFailed: {path}, Error: {e}")
 
 
 def copy_between_branches(target_path: str, source_branch: str, target_branch: str):
     source_path = get_branch_path(source_branch, target_path)
     target_path_full = get_branch_path(target_branch, target_path)
 
-    clear_target_path(target_path_full)
+    kind = detect_path_kind(target_path_full, source_path)
+    if kind == "unknown":
+        log_path_warning(f"PathTypeUnknownFallbackFile: {source_path}")
+        kind = "file"
 
-    if not is_unity_folder(source_path):
-        copy_single_file(source_path, target_path_full)
-    else:
+    clear_target_path(target_path_full, kind)
+
+    if kind == "folder":
+        if not os.path.isdir(source_path):
+            log_path_warning(f"SourceFolderNotFound: {source_path}")
+            return
         copy_folder(source_path, target_path_full)
+    else:
+        if not os.path.isfile(source_path):
+            log_path_warning(f"SourceFileNotFound: {source_path}")
+            return
+        copy_single_file(source_path, target_path_full)
 
 
 def generate_meta_file_paths(input_list: List[str]) -> List[str]:
@@ -270,7 +314,7 @@ def extract_submit_failure_reason(log_file: str, start_size: int) -> str:
 
     existing = [p for p in candidate_paths if os.path.isfile(p)]
     if not existing:
-        return "未捕获到日志文件，请检查 Jenkins 工作目录中的 p4_update_log.txt。"
+        return "Log file not found: p4_update_log.txt"
     log_path = max(existing, key=lambda p: os.path.getmtime(p))
 
     try:
@@ -278,11 +322,11 @@ def extract_submit_failure_reason(log_file: str, start_size: int) -> str:
             f.seek(max(0, start_size))
             delta = f.read().decode("utf-8", errors="ignore")
     except Exception:
-        return ""
+        return "Failed to read p4_update_log.txt"
 
     lines = [line.strip() for line in delta.splitlines() if line.strip()]
     if not lines:
-        return "日志中没有新增错误信息。"
+        return "No new error lines in p4_update_log.txt"
 
     trigger_pattern = re.compile(r"\[P4-Trigger\s+ERROR\]", re.IGNORECASE)
     trigger_indices = [idx for idx, line in enumerate(lines) if trigger_pattern.search(line)]
@@ -352,6 +396,7 @@ def build_email_report(
     target_branches: List[str],
     operation: str,
     pending_message: str = None,
+    path_warnings: List[str] = None,
 ) -> str:
     status_map = {
         "success": "\u6210\u529f",
@@ -393,6 +438,12 @@ def build_email_report(
     )
     if pending_message:
         lines.append(f"\u8ffd\u52a0\u8bf4\u660e: {pending_message}")
+    warning_list = [str(x).strip() for x in (path_warnings or []) if str(x).strip()]
+    if warning_list:
+        lines.append("")
+        lines.append("## \u8def\u5f84\u544a\u8b66")
+        for w in warning_list:
+            lines.append(f"- {w}")
     lines.append("")
     lines.append("## \u6267\u884c\u8bb0\u5f55")
 
@@ -478,7 +529,8 @@ def apply_operation(paths: List[str], source_branch: str, target_branch: str, op
     if operation == "delete":
         for path in paths:
             target_path = get_branch_path(target_branch, path)
-            delete_target_path(target_path)
+            source_hint = get_branch_path(source_branch, path)
+            delete_target_path(target_path, source_hint_path=source_hint)
         return
 
     for path in paths:
@@ -496,6 +548,7 @@ def run_branch_sync(
     pending_message: str = None,
     dry_run: bool = False,
 ):
+    _PATH_WARNING_LOGS.clear()
     records: List[Dict[str, Any]] = []
     validate_branch_config(source_branch)
     for target_branch in target_branches:
@@ -741,6 +794,7 @@ if __name__ == "__main__":
             target_branches=target_branches,
             operation=args.operation,
             pending_message=args.pending_message,
+            path_warnings=_PATH_WARNING_LOGS,
         )
         if args.dry_run:
             _safe_print(f"\u9884\u6f14\u6a21\u5f0f\u4e0d\u53d1\u9001\u6d88\u606f\uff0c\u76ee\u6807\u90ae\u7bb1: {args.email}")
