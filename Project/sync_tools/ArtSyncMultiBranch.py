@@ -901,6 +901,18 @@ def normalize_branch_key(branch_key: str) -> str:
     return str(branch_key or "").strip().lower()
 
 
+def normalize_email_arg(raw_email: str) -> str:
+    text = str(raw_email or "").strip()
+    if not text:
+        return ""
+    return (
+        text.replace("__AT__", "@")
+        .replace("[at]", "@")
+        .replace("(at)", "@")
+        .replace("＠", "@")
+    )
+
+
 def prepare_target_branches(raw_targets: List[str], source_branch: str) -> List[str]:
     source_key = normalize_branch_key(source_branch)
     cleaned: List[str] = []
@@ -1033,6 +1045,10 @@ if __name__ == "__main__":
     parser.add_argument("--submit-root", default=None, help="Repo root for custom submit tool, default derived from branch root")
     parser.add_argument("--worldx-submit", action="store_true", help="Use Worldx_Submit (run.py) with built-in default tool path")
     args = parser.parse_args()
+    raw_email_arg = args.email
+    args.email = normalize_email_arg(args.email)
+    if raw_email_arg and raw_email_arg != args.email:
+        _safe_print(f"Email normalized: {raw_email_arg} -> {args.email}")
     write_local_log(
         stage="cli_args",
         params={
@@ -1046,6 +1062,7 @@ if __name__ == "__main__":
             "open_only": args.open_only,
             "pending_message": args.pending_message,
             "email": args.email,
+            "email_raw": raw_email_arg,
             "dry_run": args.dry_run,
             "submit_method": args.submit_method,
             "submit_tool_dir": args.submit_tool_dir,
