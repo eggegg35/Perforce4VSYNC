@@ -9,6 +9,7 @@ import datetime
 import urllib.request
 import urllib.error
 import re
+import subprocess
 from typing import List, Dict, Any, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +30,7 @@ DEFAULT_SOURCE_BRANCH = "art"
 DEFAULT_MSG_API = "http://10.8.45.67:3106/lark_tools_send_msg"
 DEFAULT_TXT_DOWNLOAD_DIR = r"C:\Git\Perforce4VSYNC\Project\List"
 DEFAULT_MINIO_STREAM_PREFIX = "StreamSync"
+DEFAULT_WORLDX_SUBMIT_TOOL_DIR = r"C:\worldx_robot_HZPCC0420018_3458\tools\P4CustomTools\Tools\p4_submit"
 REQUIRED_BRANCH_FIELDS = ("root", "workspace", "p4_user")
 
 
@@ -264,6 +266,59 @@ def build_unlocal_paths(paths: List[str], root_prefix: str) -> List[str]:
     root_prefix = root_prefix.rstrip("\/")
     normalized_paths = [p.strip().replace("/", os.sep).replace("\\", os.sep) for p in paths if p.strip()]
     return [os.path.join(root_prefix, p) for p in normalized_paths]
+
+
+def derive_submit_root(branch_key: str) -> str:
+    branch_root = str(get_branch_config(branch_key).get("root", "")).strip()
+    normalized = branch_root.replace("\\", "/").rstrip("/")
+    if normalized.lower().endswith('/unity_project'):
+        normalized = normalized[:-len('/unity_project')]
+    return normalized or branch_root
+
+
+def run_custom_submit_tool(
+    branch_key: str,
+    tool_dir: str,
+    change_id: str,
+    python_cmd: str = "python",
+    submit_root: str = None,
+    effect: str = "effect",
+) -> Tuple[bool, str]:
+    branch_cfg = get_branch_config(branch_key)
+    repo_root = (submit_root or derive_submit_root(branch_key)).strip()
+    if not repo_root:
+        return False, "submit root is empty"
+
+    run_py = os.path.join(tool_dir, "run.py")
+    if not os.path.isfile(run_py):
+        return False, f"run.py not found: {run_py}"
+
+    cmd = [
+        python_cmd,
+        "-u",
+        "run.py",
+        repo_root,
+        branch_cfg["p4_user"],
+        str(change_id),
+        branch_cfg["workspace"],
+        effect,
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=tool_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        output = (proc.stdout or "").strip()
+        ok = proc.returncode == 0
+        return ok, output
+    except Exception as e:
+        return False, f"custom submit execute failed: {e}"
 
 
 def build_change_message(base_msg: str, pending_message: str = None) -> str:
@@ -547,6 +602,11 @@ def run_branch_sync(
     open_only: bool = False,
     pending_message: str = None,
     dry_run: bool = False,
+    submit_method: str = "p4tool",
+    submit_tool_dir: str = None,
+    submit_change: str = "default",
+    submit_python: str = "python",
+    submit_root: str = None,
 ):
     _PATH_WARNING_LOGS.clear()
     records: List[Dict[str, Any]] = []
@@ -642,6 +702,38 @@ def run_branch_sync(
 
         default_msg = f"sync {op}: {source_branch} -> {target_branch}"
         commit_msg = build_change_message(submit_message or default_msg, pending_message)
+
+        if submit_method == "custom-submit":
+            open_multiple_paths(
+                paths,
+                target_branch,
+                "p4_update_log.txt",
+                submit_message or default_msg,
+                pending_message=None,
+            )
+            ok, custom_out = run_custom_submit_tool(
+                branch_key=target_branch,
+                tool_dir=submit_tool_dir or "",
+                change_id=submit_change,
+                python_cmd=submit_python,
+                submit_root=submit_root,
+            )
+            submit_status = "success" if ok else "failed"
+            submit_reason = "" if ok else (custom_out or "custom submit failed")
+            if not ok:
+                unlock_multiple_paths(paths, target_branch, "p4_update_log.txt")
+            records.append(
+                {
+                    "branch": target_branch,
+                    "action": "submit",
+                    "message": commit_msg,
+                    "status": submit_status,
+                    "reason": submit_reason,
+                    "paths": list(paths),
+                }
+            )
+            continue
+
         submit_status, submit_reason = submit_multiple_paths(paths, target_branch, "p4_update_log.txt", commit_msg)
         if submit_status == "failed":
             unlock_multiple_paths(paths, target_branch, "p4_update_log.txt")
@@ -762,6 +854,12 @@ if __name__ == "__main__":
     parser.add_argument("--pending-message", default=None, help="Extra text for changelist description, format: p4-p4 + default message + pending-message")
     parser.add_argument("--email", default=None, help="Optional: send execution log to this email")
     parser.add_argument("--dry-run", action="store_true", help="Print actions only, do not execute")
+    parser.add_argument("--submit-method", choices=["p4tool", "custom-submit"], default="p4tool", help="Submit method")
+    parser.add_argument("--submit-tool-dir", default=None, help="Custom submit tool directory (contains run.py)")
+    parser.add_argument("--submit-change", default="default", help="Change id for custom submit")
+    parser.add_argument("--submit-python", default="python", help="Python executable for custom submit tool")
+    parser.add_argument("--submit-root", default=None, help="Repo root for custom submit tool, default derived from branch root")
+    parser.add_argument("--worldx-submit", action="store_true", help="Use Worldx_Submit (run.py) with built-in default tool path")
     args = parser.parse_args()
 
     set_active_config(args.config)
@@ -771,6 +869,17 @@ if __name__ == "__main__":
         _safe_print("Error: source branch is empty.")
         sys.exit(1)
 
+
+    if args.worldx_submit:
+        args.submit_method = "custom-submit"
+        if not args.submit_tool_dir:
+            args.submit_tool_dir = os.getenv("WORLDX_SUBMIT_TOOL_DIR", DEFAULT_WORLDX_SUBMIT_TOOL_DIR)
+        if args.submit_python == "python":
+            args.submit_python = sys.executable or "python"
+
+    if args.submit_method == "custom-submit" and not args.submit_tool_dir:
+        _safe_print("Error: --submit-tool-dir is required when --submit-method custom-submit")
+        sys.exit(1)
     target_branches = prepare_target_branches(parse_csv_values(args.branches), source_branch)
     normalized_paths = resolve_paths_from_args(files_arg=args.files, txtname_arg=args.txtname)
 
@@ -784,6 +893,11 @@ if __name__ == "__main__":
         open_only=args.open_only,
         pending_message=args.pending_message,
         dry_run=args.dry_run,
+        submit_method=args.submit_method,
+        submit_tool_dir=args.submit_tool_dir,
+        submit_change=args.submit_change,
+        submit_python=args.submit_python,
+        submit_root=args.submit_root,
     )
 
     if args.email:
